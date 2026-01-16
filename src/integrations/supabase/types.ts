@@ -16,7 +16,10 @@ export type Database = {
     Tables: {
       client_billing: {
         Row: {
+          additional_charges: number | null
+          additional_charges_notes: string | null
           balance: number
+          billing_day: number | null
           client_id: string
           created_at: string
           first_billing_date: string
@@ -24,10 +27,14 @@ export type Database = {
           installation_cost: number
           installation_date: string
           monthly_fee: number
+          prorated_amount: number | null
           updated_at: string
         }
         Insert: {
+          additional_charges?: number | null
+          additional_charges_notes?: string | null
           balance?: number
+          billing_day?: number | null
           client_id: string
           created_at?: string
           first_billing_date: string
@@ -35,10 +42,14 @@ export type Database = {
           installation_cost?: number
           installation_date: string
           monthly_fee: number
+          prorated_amount?: number | null
           updated_at?: string
         }
         Update: {
+          additional_charges?: number | null
+          additional_charges_notes?: string | null
           balance?: number
+          billing_day?: number | null
           client_id?: string
           created_at?: string
           first_billing_date?: string
@@ -46,6 +57,7 @@ export type Database = {
           installation_cost?: number
           installation_date?: string
           monthly_fee?: number
+          prorated_amount?: number | null
           updated_at?: string
         }
         Relationships: [
@@ -159,6 +171,7 @@ export type Database = {
           antenna_ip: string | null
           antenna_mac: string | null
           antenna_model: string | null
+          antenna_serial: string | null
           antenna_ssid: string | null
           client_id: string
           created_at: string
@@ -179,6 +192,7 @@ export type Database = {
           antenna_ip?: string | null
           antenna_mac?: string | null
           antenna_model?: string | null
+          antenna_serial?: string | null
           antenna_ssid?: string | null
           client_id: string
           created_at?: string
@@ -199,6 +213,7 @@ export type Database = {
           antenna_ip?: string | null
           antenna_mac?: string | null
           antenna_model?: string | null
+          antenna_serial?: string | null
           antenna_ssid?: string | null
           client_id?: string
           created_at?: string
