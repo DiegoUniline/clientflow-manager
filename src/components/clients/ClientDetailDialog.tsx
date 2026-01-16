@@ -1,20 +1,41 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { toast } from 'sonner';
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { format, addMonths, isBefore, startOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { User, MapPin, Phone, FileText, Wifi, CreditCard, Image, Calculator, Calendar, DollarSign, Clock, Receipt, AlertCircle } from 'lucide-react';
+import { 
+  User, MapPin, Phone, FileText, Wifi, DollarSign, 
+  Calendar, Image, Plus, StickyNote, CreditCard, 
+  Receipt, CheckCircle2, Clock, AlertCircle, Edit, Loader2
+} from 'lucide-react';
 import { formatCurrency } from '@/lib/billing';
 import type { Client, ClientBilling, Equipment, Payment } from '@/types/database';
 
@@ -27,6 +48,8 @@ interface ClientDetailDialogProps {
   client: ClientWithDetails | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onRegisterPayment?: () => void;
+  onEdit?: () => void;
 }
 
 // Función para calcular la próxima fecha de cobro
@@ -44,9 +67,23 @@ function getNextBillingDate(billingDay: number): Date {
   return nextBilling;
 }
 
-export function ClientDetailDialog({ client, open, onOpenChange }: ClientDetailDialogProps) {
-  const [selectedTab, setSelectedTab] = useState('resumen');
+// Función para generar ID de cliente
+function generateClientCode(id: string): string {
+  return `#CLI${id.slice(0, 6).toUpperCase()}`;
+}
 
+export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayment, onEdit }: ClientDetailDialogProps) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const [selectedTab, setSelectedTab] = useState('servicios');
+  const [newNote, setNewNote] = useState('');
+  const [isAddingNote, setIsAddingNote] = useState(false);
+  const [isAddingCharge, setIsAddingCharge] = useState(false);
+  const [selectedChargeType, setSelectedChargeType] = useState('');
+  const [chargeAmount, setChargeAmount] = useState('');
+  const [chargeDescription, setChargeDescription] = useState('');
+
+  // Fetch payments
   const { data: payments = [] } = useQuery({
     queryKey: ['payments', client?.id],
     queryFn: async () => {
@@ -63,21 +100,78 @@ export function ClientDetailDialog({ client, open, onOpenChange }: ClientDetailD
     enabled: !!client?.id && open,
   });
 
+  // Fetch charges
+  const { data: charges = [], refetch: refetchCharges } = useQuery({
+    queryKey: ['client_charges', client?.id],
+    queryFn: async () => {
+      if (!client?.id) return [];
+      const { data, error } = await supabase
+        .from('client_charges')
+        .select('*, charge_catalog(*)')
+        .eq('client_id', client.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!client?.id && open,
+  });
+
+  // Fetch notes
+  const { data: notes = [], refetch: refetchNotes } = useQuery({
+    queryKey: ['client_notes', client?.id],
+    queryFn: async () => {
+      if (!client?.id) return [];
+      const { data, error } = await supabase
+        .from('client_notes')
+        .select('*')
+        .eq('client_id', client.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!client?.id && open,
+  });
+
+  // Fetch charge catalog
+  const { data: chargeCatalog = [] } = useQuery({
+    queryKey: ['charge_catalog'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('charge_catalog')
+        .select('*')
+        .eq('is_active', true)
+        .order('name');
+
+      if (error) throw error;
+      return data;
+    },
+    enabled: open,
+  });
+
   if (!client) return null;
 
   const billing = client.client_billing as any;
   const equipment = client.equipment?.[0] as any;
   const billingDay = billing?.billing_day || 10;
   const nextBillingDate = getNextBillingDate(billingDay);
+  
+  // Balance calculation (negative = saldo a favor)
+  const balance = billing?.balance || 0;
+  const hasFavorBalance = balance < 0;
+  const hasDebt = balance > 0;
+  const displayBalance = Math.abs(balance);
+
+  // Pending charges
+  const pendingCharges = charges.filter((c: any) => c.status === 'pending');
+  const totalPendingCharges = pendingCharges.reduce((sum: number, c: any) => sum + c.amount, 0);
 
   // Calcular meses de servicio
   const installDate = billing?.installation_date ? new Date(billing.installation_date) : null;
   const monthsOfService = installDate 
     ? Math.floor((new Date().getTime() - installDate.getTime()) / (1000 * 60 * 60 * 24 * 30))
     : 0;
-
-  // Total pagado
-  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
 
   const getDocumentUrl = async (path: string | null) => {
     if (!path) return null;
@@ -93,592 +187,696 @@ export function ClientDetailDialog({ client, open, onOpenChange }: ClientDetailD
     }
   };
 
+  const handleAddNote = async () => {
+    if (!newNote.trim() || !client.id) return;
+    
+    setIsAddingNote(true);
+    try {
+      const { error } = await supabase.from('client_notes').insert({
+        client_id: client.id,
+        note: newNote.trim(),
+        created_by: user?.id,
+      });
+
+      if (error) throw error;
+      
+      toast.success('Nota agregada');
+      setNewNote('');
+      refetchNotes();
+    } catch (error: any) {
+      toast.error(error.message || 'Error al agregar nota');
+    } finally {
+      setIsAddingNote(false);
+    }
+  };
+
+  const handleAddCharge = async () => {
+    if (!chargeAmount || !chargeDescription || !client.id) return;
+    
+    setIsAddingCharge(true);
+    try {
+      const amount = parseFloat(chargeAmount);
+      if (isNaN(amount) || amount <= 0) {
+        toast.error('El monto debe ser mayor a 0');
+        return;
+      }
+
+      // Insert charge
+      const { error: chargeError } = await supabase.from('client_charges').insert({
+        client_id: client.id,
+        charge_catalog_id: selectedChargeType || null,
+        description: chargeDescription,
+        amount,
+        status: 'pending',
+        created_by: user?.id,
+      });
+
+      if (chargeError) throw chargeError;
+
+      // Update balance
+      if (billing) {
+        const newBalance = (billing.balance || 0) + amount;
+        const { error: balanceError } = await supabase
+          .from('client_billing')
+          .update({ balance: newBalance })
+          .eq('client_id', client.id);
+
+        if (balanceError) throw balanceError;
+      }
+      
+      toast.success('Cargo agregado');
+      setSelectedChargeType('');
+      setChargeAmount('');
+      setChargeDescription('');
+      refetchCharges();
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    } catch (error: any) {
+      toast.error(error.message || 'Error al agregar cargo');
+    } finally {
+      setIsAddingCharge(false);
+    }
+  };
+
+  const handleSelectChargeFromCatalog = (catalogId: string) => {
+    setSelectedChargeType(catalogId);
+    const selected = chargeCatalog.find((c: any) => c.id === catalogId);
+    if (selected) {
+      setChargeAmount(selected.default_amount.toString());
+      setChargeDescription(selected.name);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <DialogTitle className="text-2xl">
-                {client.first_name} {client.last_name_paterno} {client.last_name_materno || ''}
-              </DialogTitle>
-              <p className="text-muted-foreground">{client.phone1}</p>
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto p-0">
+        {/* Header similar a la imagen */}
+        <div className="p-6 pb-4">
+          <div className="flex items-start gap-6">
+            {/* Avatar con iniciales */}
+            <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/10 flex items-center justify-center border-2 border-primary/20">
+              <span className="text-3xl font-bold text-primary">
+                {client.first_name.charAt(0)}{client.last_name_paterno.charAt(0)}
+              </span>
             </div>
-            <div className="flex items-center gap-2">
-              <Badge variant={client.status === 'active' ? 'default' : 'destructive'} className="text-sm">
-                {client.status === 'active' ? 'Activo' : 'Cancelado'}
-              </Badge>
-              {(billing?.balance || 0) > 0 && (
-                <Badge variant="destructive" className="bg-red-100 text-red-700">
-                  <AlertCircle className="h-3 w-3 mr-1" />
-                  Con Adeudo
+            
+            {/* Info del cliente */}
+            <div className="flex-1">
+              <div className="flex items-center gap-3 mb-1">
+                <h2 className="text-2xl font-bold">
+                  {client.first_name} {client.last_name_paterno} {client.last_name_materno || ''}
+                </h2>
+                <span className="text-muted-foreground text-sm">{generateClientCode(client.id)}</span>
+                <Badge 
+                  variant={client.status === 'active' ? 'default' : 'destructive'} 
+                  className={client.status === 'active' ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' : ''}
+                >
+                  {client.status === 'active' ? 'ACTIVO' : 'CANCELADO'}
                 </Badge>
-              )}
+              </div>
+              <div className="flex items-center gap-4 text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Phone className="h-4 w-4" />
+                  {client.phone1}
+                </span>
+                <span className="flex items-center gap-1">
+                  <MapPin className="h-4 w-4" />
+                  {client.street} {client.exterior_number}
+                </span>
+              </div>
+              
+              {/* Botones de acción */}
+              <div className="flex gap-3 mt-4">
+                <Button onClick={onRegisterPayment} className="bg-emerald-600 hover:bg-emerald-700">
+                  <DollarSign className="h-4 w-4 mr-2" />
+                  Registrar Pago
+                </Button>
+                <Button variant="outline" onClick={onEdit}>
+                  <Edit className="h-4 w-4 mr-2" />
+                  Editar
+                </Button>
+              </div>
             </div>
           </div>
-        </DialogHeader>
+        </div>
 
-        <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-          <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="resumen">Resumen</TabsTrigger>
-            <TabsTrigger value="equipo">Equipo</TabsTrigger>
-            <TabsTrigger value="pagos">Pagos</TabsTrigger>
-            <TabsTrigger value="info">Info Personal</TabsTrigger>
-            <TabsTrigger value="documentos">Documentos</TabsTrigger>
-          </TabsList>
+        <Separator />
 
-          {/* TAB RESUMEN */}
-          <TabsContent value="resumen" className="space-y-4">
-            {/* Cards principales */}
-            <div className="grid grid-cols-4 gap-4">
-              <Card className="bg-primary/5 border-primary/20">
-                <CardContent className="pt-4">
-                  <div className="flex items-center gap-2 text-primary mb-1">
-                    <DollarSign className="h-4 w-4" />
-                    <span className="text-sm font-medium">Mensualidad</span>
+        {/* Cards de resumen */}
+        <div className="px-6 py-4">
+          <div className="grid grid-cols-3 gap-4">
+            {/* Tarifa mensual */}
+            <Card className="border-2">
+              <CardContent className="pt-4 pb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tarifa Mensual</span>
+                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                    <DollarSign className="h-5 w-5 text-primary" />
                   </div>
-                  <p className="text-2xl font-bold">{formatCurrency(billing?.monthly_fee || 0)}</p>
-                </CardContent>
-              </Card>
+                </div>
+                <p className="text-3xl font-bold">{formatCurrency(billing?.monthly_fee || 0)}</p>
+                <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                  <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                  {billing?.monthly_fee ? 'Plan activo' : 'Sin plan asignado'}
+                </p>
+              </CardContent>
+            </Card>
 
-              <Card className="bg-blue-50 border-blue-200">
-                <CardContent className="pt-4">
-                  <div className="flex items-center gap-2 text-blue-600 mb-1">
-                    <Calendar className="h-4 w-4" />
-                    <span className="text-sm font-medium">Próximo Cobro</span>
+            {/* Saldo actual */}
+            <Card className={`border-2 ${hasFavorBalance ? 'border-emerald-200 bg-emerald-50/50' : hasDebt ? 'border-red-200 bg-red-50/50' : ''}`}>
+              <CardContent className="pt-4 pb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Saldo Actual</span>
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${hasFavorBalance ? 'bg-emerald-100' : hasDebt ? 'bg-red-100' : 'bg-muted'}`}>
+                    <CreditCard className={`h-5 w-5 ${hasFavorBalance ? 'text-emerald-600' : hasDebt ? 'text-red-600' : 'text-muted-foreground'}`} />
                   </div>
-                  <p className="text-xl font-bold text-blue-700">
-                    {format(nextBillingDate, 'dd MMM yyyy', { locale: es })}
-                  </p>
-                  <p className="text-xs text-blue-600">Día de corte: {billingDay}</p>
-                </CardContent>
-              </Card>
+                </div>
+                <p className={`text-3xl font-bold ${hasFavorBalance ? 'text-emerald-600' : hasDebt ? 'text-red-600' : ''}`}>
+                  {hasFavorBalance ? '-' : ''}{formatCurrency(displayBalance)}
+                </p>
+                <p className="text-xs flex items-center gap-1 mt-1">
+                  <span className={`w-2 h-2 rounded-full ${hasFavorBalance ? 'bg-emerald-500' : hasDebt ? 'bg-red-500' : 'bg-emerald-500'}`}></span>
+                  <span className={hasFavorBalance ? 'text-emerald-600' : hasDebt ? 'text-red-600' : 'text-emerald-600'}>
+                    {hasFavorBalance ? 'Saldo a favor' : hasDebt ? 'Con adeudo' : 'Cuenta al corriente'}
+                  </span>
+                </p>
+              </CardContent>
+            </Card>
 
-              <Card className={(billing?.balance || 0) > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}>
-                <CardContent className="pt-4">
-                  <div className={`flex items-center gap-2 mb-1 ${(billing?.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                    <CreditCard className="h-4 w-4" />
-                    <span className="text-sm font-medium">Saldo Actual</span>
+            {/* Próximo vencimiento */}
+            <Card className="border-2">
+              <CardContent className="pt-4 pb-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Próximo Vencimiento</span>
+                  <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                    <Calendar className="h-5 w-5 text-amber-600" />
                   </div>
-                  <p className={`text-2xl font-bold ${(billing?.balance || 0) > 0 ? 'text-red-700' : 'text-green-700'}`}>
-                    {formatCurrency(billing?.balance || 0)}
-                  </p>
-                </CardContent>
-              </Card>
+                </div>
+                <p className="text-2xl font-bold">
+                  {format(nextBillingDate, 'dd MMM yyyy', { locale: es })}
+                </p>
+                <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                  {pendingCharges.length > 0 
+                    ? `${pendingCharges.length} cargo(s) pendiente(s)` 
+                    : 'Sin cargos pendientes'}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
 
+        {/* Tabs */}
+        <div className="px-6 pb-6">
+          <Tabs value={selectedTab} onValueChange={setSelectedTab}>
+            <TabsList className="bg-muted/50 p-1 h-auto">
+              <TabsTrigger value="servicios" className="data-[state=active]:bg-background">
+                Servicios
+              </TabsTrigger>
+              <TabsTrigger value="estado-cuenta" className="data-[state=active]:bg-background">
+                Estado de Cuenta
+              </TabsTrigger>
+              <TabsTrigger value="documentos" className="data-[state=active]:bg-background">
+                Documentos INE
+              </TabsTrigger>
+              <TabsTrigger value="notas" className="data-[state=active]:bg-background">
+                Notas
+              </TabsTrigger>
+            </TabsList>
+
+            {/* TAB SERVICIOS - Equipo instalado */}
+            <TabsContent value="servicios" className="mt-4 space-y-4">
               <Card>
-                <CardContent className="pt-4">
-                  <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                    <Clock className="h-4 w-4" />
-                    <span className="text-sm font-medium">Antigüedad</span>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Wifi className="h-5 w-5" />
+                      Servicios Contratados
+                    </CardTitle>
                   </div>
-                  <p className="text-2xl font-bold">{monthsOfService}</p>
-                  <p className="text-xs text-muted-foreground">meses de servicio</p>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>PLAN</TableHead>
+                        <TableHead>TARIFA</TableHead>
+                        <TableHead>FECHA ALTA</TableHead>
+                        <TableHead>ESTATUS</TableHead>
+                        <TableHead>ANTIGÜEDAD</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell className="font-medium">Internet Residencial</TableCell>
+                        <TableCell>{formatCurrency(billing?.monthly_fee || 0)}</TableCell>
+                        <TableCell>
+                          {billing?.installation_date 
+                            ? format(new Date(billing.installation_date), 'dd/MM/yyyy')
+                            : '-'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                            Activo
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{monthsOfService} meses</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
                 </CardContent>
               </Card>
-            </div>
 
-            {/* Desglose de cargos */}
-            <div className="grid grid-cols-2 gap-4">
+              {/* Equipo */}
+              <div className="grid grid-cols-2 gap-4">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Wifi className="h-4 w-4 text-blue-600" />
+                      Antena
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {equipment ? (
+                      <div className="space-y-3 text-sm">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <p className="text-muted-foreground">Marca/Modelo</p>
+                            <p className="font-medium">{equipment.antenna_brand} {equipment.antenna_model}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Serie</p>
+                            <p className="font-mono text-xs">{equipment.antenna_serial || '-'}</p>
+                          </div>
+                        </div>
+                        <Separator />
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <p className="text-muted-foreground">IP</p>
+                            <p className="font-mono">{equipment.antenna_ip || '-'}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">MAC</p>
+                            <p className="font-mono text-xs">{equipment.antenna_mac || '-'}</p>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">SSID</p>
+                          <p className="font-medium">{equipment.antenna_ssid || '-'}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground text-center py-4">Sin información</p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Wifi className="h-4 w-4 text-green-600" />
+                      Router
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {equipment ? (
+                      <div className="space-y-3 text-sm">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <p className="text-muted-foreground">Marca/Modelo</p>
+                            <p className="font-medium">{equipment.router_brand} {equipment.router_model}</p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Serie</p>
+                            <p className="font-mono text-xs">{equipment.router_serial || '-'}</p>
+                          </div>
+                        </div>
+                        <Separator />
+                        <div className="bg-primary/5 p-3 rounded-lg">
+                          <p className="text-muted-foreground text-xs">Red WiFi</p>
+                          <p className="font-bold">{equipment.router_network_name || '-'}</p>
+                          <p className="text-muted-foreground text-xs mt-2">Contraseña</p>
+                          <p className="font-mono bg-white px-2 py-1 rounded border">{equipment.router_password || '-'}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground text-center py-4">Sin información</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              {equipment && (
+                <Card>
+                  <CardContent className="py-4">
+                    <div className="flex items-center gap-6 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Instalador:</span>
+                        <span className="font-medium ml-2">{equipment.installer_name || '-'}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Fecha instalación:</span>
+                        <span className="font-medium ml-2">
+                          {equipment.installation_date 
+                            ? format(new Date(equipment.installation_date), 'dd/MM/yyyy')
+                            : '-'}
+                        </span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </TabsContent>
+
+            {/* TAB ESTADO DE CUENTA */}
+            <TabsContent value="estado-cuenta" className="mt-4 space-y-4">
+              {/* Agregar cargo */}
               <Card>
-                <CardHeader className="pb-2">
+                <CardHeader className="pb-3">
                   <CardTitle className="text-lg flex items-center gap-2">
-                    <Calculator className="h-5 w-5" />
-                    Desglose de Cargos Iniciales
+                    <Plus className="h-5 w-5" />
+                    Agregar Cargo
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-muted-foreground">Prorrateo (primer mes):</span>
-                    <span className="font-medium">{formatCurrency(billing?.prorated_amount || 0)}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-muted-foreground">Costo de instalación:</span>
-                    <span className="font-medium">{formatCurrency(billing?.installation_cost || 0)}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-muted-foreground">Cargos adicionales:</span>
-                    <span className="font-medium">{formatCurrency(billing?.additional_charges || 0)}</span>
-                  </div>
-                  {billing?.additional_charges_notes && (
-                    <p className="text-xs text-muted-foreground italic bg-muted p-2 rounded">
-                      {billing.additional_charges_notes}
-                    </p>
-                  )}
-                  <div className="flex justify-between py-2 text-lg font-bold">
-                    <span>Cargo Inicial Total:</span>
-                    <span className="text-primary">
-                      {formatCurrency(
-                        (billing?.prorated_amount || 0) + 
-                        (billing?.installation_cost || 0) + 
-                        (billing?.additional_charges || 0)
-                      )}
-                    </span>
+                <CardContent>
+                  <div className="grid grid-cols-4 gap-3">
+                    <Select value={selectedChargeType} onValueChange={handleSelectChargeFromCatalog}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Tipo de cargo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {chargeCatalog.map((item: any) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.name} ({formatCurrency(item.default_amount)})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      placeholder="Descripción"
+                      value={chargeDescription}
+                      onChange={(e) => setChargeDescription(e.target.value)}
+                    />
+                    <Input
+                      type="number"
+                      placeholder="Monto"
+                      value={chargeAmount}
+                      onChange={(e) => setChargeAmount(e.target.value)}
+                    />
+                    <Button onClick={handleAddCharge} disabled={isAddingCharge || !chargeAmount || !chargeDescription}>
+                      {isAddingCharge && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      Agregar
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
 
+              {/* Cargos pendientes */}
+              {pendingCharges.length > 0 && (
+                <Card className="border-amber-200 bg-amber-50/50">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2 text-amber-700">
+                      <AlertCircle className="h-5 w-5" />
+                      Cargos Pendientes ({pendingCharges.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>DESCRIPCIÓN</TableHead>
+                          <TableHead>MONTO</TableHead>
+                          <TableHead>FECHA</TableHead>
+                          <TableHead>ESTATUS</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pendingCharges.map((charge: any) => (
+                          <TableRow key={charge.id}>
+                            <TableCell>{charge.description}</TableCell>
+                            <TableCell className="font-medium">{formatCurrency(charge.amount)}</TableCell>
+                            <TableCell>{format(new Date(charge.created_at), 'dd/MM/yyyy')}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-300">
+                                <Clock className="h-3 w-3 mr-1" />
+                                Pendiente
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    <div className="flex justify-end mt-3 pt-3 border-t">
+                      <span className="font-bold text-amber-700">
+                        Total Pendiente: {formatCurrency(totalPendingCharges)}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Historial de pagos */}
               <Card>
-                <CardHeader className="pb-2">
+                <CardHeader className="pb-3">
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Receipt className="h-5 w-5" />
-                    Resumen de Pagos
+                    Historial de Pagos
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-muted-foreground">Total pagos realizados:</span>
-                    <span className="font-medium">{payments.length}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-muted-foreground">Monto total pagado:</span>
-                    <span className="font-medium text-green-600">{formatCurrency(totalPaid)}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b">
-                    <span className="text-muted-foreground">Fecha de instalación:</span>
-                    <span className="font-medium">
-                      {billing?.installation_date 
-                        ? format(new Date(billing.installation_date), 'dd MMM yyyy', { locale: es })
-                        : '-'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-2">
-                    <span className="text-muted-foreground">Primer cobro:</span>
-                    <span className="font-medium">
-                      {billing?.first_billing_date 
-                        ? format(new Date(billing.first_billing_date), 'dd MMM yyyy', { locale: es })
-                        : '-'}
-                    </span>
-                  </div>
+                <CardContent>
+                  {payments.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>FECHA</TableHead>
+                          <TableHead>MONTO</TableHead>
+                          <TableHead>TIPO</TableHead>
+                          <TableHead>PERIODO</TableHead>
+                          <TableHead>RECIBO</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {payments.map((payment) => (
+                          <TableRow key={payment.id}>
+                            <TableCell>
+                              {format(new Date(payment.payment_date), 'dd/MM/yyyy')}
+                            </TableCell>
+                            <TableCell className="font-medium text-emerald-600">
+                              {formatCurrency(payment.amount)}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{payment.payment_type}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              {payment.period_month && payment.period_year 
+                                ? `${payment.period_month}/${payment.period_year}`
+                                : '-'}
+                            </TableCell>
+                            <TableCell>{payment.receipt_number || '-'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <p className="text-muted-foreground text-center py-8">
+                      No hay pagos registrados
+                    </p>
+                  )}
                 </CardContent>
               </Card>
-            </div>
 
-            {/* Equipo instalado resumen */}
-            {equipment && (
+              {/* Historial de cargos */}
               <Card>
-                <CardHeader className="pb-2">
+                <CardHeader className="pb-3">
                   <CardTitle className="text-lg flex items-center gap-2">
-                    <Wifi className="h-5 w-5" />
-                    Equipo Instalado
+                    <CreditCard className="h-5 w-5" />
+                    Historial de Cargos
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {charges.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>FECHA</TableHead>
+                          <TableHead>DESCRIPCIÓN</TableHead>
+                          <TableHead>MONTO</TableHead>
+                          <TableHead>ESTATUS</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {charges.map((charge: any) => (
+                          <TableRow key={charge.id}>
+                            <TableCell>{format(new Date(charge.created_at), 'dd/MM/yyyy')}</TableCell>
+                            <TableCell>{charge.description}</TableCell>
+                            <TableCell className="font-medium">{formatCurrency(charge.amount)}</TableCell>
+                            <TableCell>
+                              {charge.status === 'paid' ? (
+                                <Badge className="bg-emerald-100 text-emerald-700">
+                                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                                  Pagado
+                                </Badge>
+                              ) : charge.status === 'cancelled' ? (
+                                <Badge variant="secondary">Cancelado</Badge>
+                              ) : (
+                                <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-300">
+                                  <Clock className="h-3 w-3 mr-1" />
+                                  Pendiente
+                                </Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <p className="text-muted-foreground text-center py-8">
+                      No hay cargos registrados
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* TAB DOCUMENTOS */}
+            <TabsContent value="documentos" className="mt-4 space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <FileText className="h-5 w-5" />
+                    Documentos del Cliente
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <h4 className="font-semibold text-primary">Antena</h4>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                        <span className="text-muted-foreground">Marca/Modelo:</span>
-                        <span className="font-medium">{equipment.antenna_brand} {equipment.antenna_model}</span>
-                        <span className="text-muted-foreground">IP:</span>
-                        <span className="font-mono">{equipment.antenna_ip || '-'}</span>
-                        <span className="text-muted-foreground">MAC:</span>
-                        <span className="font-mono text-xs">{equipment.antenna_mac || '-'}</span>
-                        <span className="text-muted-foreground">SSID:</span>
-                        <span>{equipment.antenna_ssid || '-'}</span>
+                    <div className="space-y-3">
+                      <h4 className="font-semibold">INE Suscriptor</h4>
+                      <div className="flex gap-2">
+                        <Button
+                          variant={client.ine_subscriber_front ? 'default' : 'outline'}
+                          size="sm"
+                          disabled={!client.ine_subscriber_front}
+                          onClick={() => handleDownloadDocument(client.ine_subscriber_front)}
+                        >
+                          <Image className="h-4 w-4 mr-2" />
+                          Frente
+                        </Button>
+                        <Button
+                          variant={client.ine_subscriber_back ? 'default' : 'outline'}
+                          size="sm"
+                          disabled={!client.ine_subscriber_back}
+                          onClick={() => handleDownloadDocument(client.ine_subscriber_back)}
+                        >
+                          <Image className="h-4 w-4 mr-2" />
+                          Reverso
+                        </Button>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <h4 className="font-semibold text-primary">Router</h4>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                        <span className="text-muted-foreground">Marca/Modelo:</span>
-                        <span className="font-medium">{equipment.router_brand} {equipment.router_model}</span>
-                        <span className="text-muted-foreground">Red WiFi:</span>
-                        <span className="font-medium">{equipment.router_network_name || '-'}</span>
-                        <span className="text-muted-foreground">Contraseña:</span>
-                        <span className="font-mono bg-muted px-1 rounded">{equipment.router_password || '-'}</span>
-                        <span className="text-muted-foreground">IP:</span>
-                        <span className="font-mono">{equipment.router_ip || '-'}</span>
+
+                    <div className="space-y-3">
+                      <h4 className="font-semibold">INE Adicional</h4>
+                      <div className="flex gap-2">
+                        <Button
+                          variant={client.ine_other_front ? 'default' : 'outline'}
+                          size="sm"
+                          disabled={!client.ine_other_front}
+                          onClick={() => handleDownloadDocument(client.ine_other_front)}
+                        >
+                          <Image className="h-4 w-4 mr-2" />
+                          Frente
+                        </Button>
+                        <Button
+                          variant={client.ine_other_back ? 'default' : 'outline'}
+                          size="sm"
+                          disabled={!client.ine_other_back}
+                          onClick={() => handleDownloadDocument(client.ine_other_back)}
+                        >
+                          <Image className="h-4 w-4 mr-2" />
+                          Reverso
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 col-span-2">
+                      <h4 className="font-semibold">Contrato Firmado</h4>
+                      <div className="flex gap-2">
+                        <Button
+                          variant={client.contract_page1 ? 'default' : 'outline'}
+                          size="sm"
+                          disabled={!client.contract_page1}
+                          onClick={() => handleDownloadDocument(client.contract_page1)}
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          Página 1
+                        </Button>
+                        <Button
+                          variant={client.contract_page2 ? 'default' : 'outline'}
+                          size="sm"
+                          disabled={!client.contract_page2}
+                          onClick={() => handleDownloadDocument(client.contract_page2)}
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          Página 2
+                        </Button>
                       </div>
                     </div>
                   </div>
                 </CardContent>
               </Card>
-            )}
-          </TabsContent>
+            </TabsContent>
 
-          {/* TAB EQUIPO */}
-          <TabsContent value="equipo" className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            {/* TAB NOTAS */}
+            <TabsContent value="notas" className="mt-4 space-y-4">
               <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <Wifi className="h-5 w-5 text-blue-600" />
-                    Antena
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <StickyNote className="h-5 w-5" />
+                    Agregar Nota
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {equipment ? (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Marca</p>
-                          <p className="font-medium text-lg">{equipment.antenna_brand || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-muted-foreground">Modelo</p>
-                          <p className="font-medium text-lg">{equipment.antenna_model || '-'}</p>
-                        </div>
-                      </div>
-                      <Separator />
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Dirección MAC</p>
-                          <p className="font-mono bg-muted px-2 py-1 rounded text-sm">{equipment.antenna_mac || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-muted-foreground">Dirección IP</p>
-                          <p className="font-mono bg-muted px-2 py-1 rounded text-sm">{equipment.antenna_ip || '-'}</p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-sm text-muted-foreground">SSID</p>
-                          <p className="font-medium">{equipment.antenna_ssid || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-muted-foreground">Número de Serie</p>
-                          <p className="font-mono text-sm">{equipment.antenna_serial || '-'}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground text-center py-8">Sin información de antena</p>
-                  )}
+                  <div className="flex gap-3">
+                    <Textarea
+                      placeholder="Escribe una nota sobre el cliente..."
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      rows={2}
+                      className="flex-1"
+                    />
+                    <Button onClick={handleAddNote} disabled={isAddingNote || !newNote.trim()}>
+                      {isAddingNote && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      <Plus className="h-4 w-4 mr-1" />
+                      Agregar
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
 
               <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <Wifi className="h-5 w-5 text-green-600" />
-                    Router
-                  </CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg">Historial de Notas</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {equipment ? (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Marca</p>
-                          <p className="font-medium text-lg">{equipment.router_brand || '-'}</p>
+                  {notes.length > 0 ? (
+                    <div className="space-y-3">
+                      {notes.map((note: any) => (
+                        <div key={note.id} className="p-4 bg-muted/50 rounded-lg border">
+                          <p className="text-sm">{note.note}</p>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            {format(new Date(note.created_at), "dd 'de' MMMM 'de' yyyy, HH:mm", { locale: es })}
+                          </p>
                         </div>
-                        <div>
-                          <p className="text-sm text-muted-foreground">Modelo</p>
-                          <p className="font-medium text-lg">{equipment.router_model || '-'}</p>
-                        </div>
-                      </div>
-                      <Separator />
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-sm text-muted-foreground">Dirección MAC</p>
-                          <p className="font-mono bg-muted px-2 py-1 rounded text-sm">{equipment.router_mac || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-sm text-muted-foreground">Dirección IP</p>
-                          <p className="font-mono bg-muted px-2 py-1 rounded text-sm">{equipment.router_ip || '-'}</p>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Número de Serie</p>
-                        <p className="font-mono text-sm">{equipment.router_serial || '-'}</p>
-                      </div>
-                      <Separator />
-                      <div className="bg-primary/5 p-4 rounded-lg">
-                        <p className="text-sm text-muted-foreground mb-1">Red WiFi</p>
-                        <p className="font-bold text-lg">{equipment.router_network_name || '-'}</p>
-                        <p className="text-sm text-muted-foreground mt-2 mb-1">Contraseña</p>
-                        <p className="font-mono bg-white px-3 py-2 rounded border text-lg">{equipment.router_password || '-'}</p>
-                      </div>
+                      ))}
                     </div>
                   ) : (
-                    <p className="text-muted-foreground text-center py-8">Sin información de router</p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-
-            {equipment && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">Información de Instalación</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Fecha de Instalación</p>
-                      <p className="font-medium">
-                        {equipment.installation_date
-                          ? format(new Date(equipment.installation_date), "EEEE, dd 'de' MMMM 'de' yyyy", { locale: es })
-                          : '-'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Instalador</p>
-                      <p className="font-medium">{equipment.installer_name || '-'}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </TabsContent>
-
-          {/* TAB PAGOS */}
-          <TabsContent value="pagos" className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
-              <Card className="bg-green-50 border-green-200">
-                <CardContent className="pt-4">
-                  <p className="text-sm text-green-600 mb-1">Total Pagado</p>
-                  <p className="text-2xl font-bold text-green-700">{formatCurrency(totalPaid)}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-4">
-                  <p className="text-sm text-muted-foreground mb-1">Número de Pagos</p>
-                  <p className="text-2xl font-bold">{payments.length}</p>
-                </CardContent>
-              </Card>
-              <Card className={(billing?.balance || 0) > 0 ? 'bg-red-50 border-red-200' : ''}>
-                <CardContent className="pt-4">
-                  <p className={`text-sm mb-1 ${(billing?.balance || 0) > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
-                    Saldo Pendiente
-                  </p>
-                  <p className={`text-2xl font-bold ${(billing?.balance || 0) > 0 ? 'text-red-700' : ''}`}>
-                    {formatCurrency(billing?.balance || 0)}
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Receipt className="h-5 w-5" />
-                  Historial de Pagos
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {payments.length > 0 ? (
-                  <div className="space-y-2">
-                    {payments.map((payment) => (
-                      <div
-                        key={payment.id}
-                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
-                            <DollarSign className="h-6 w-6 text-green-600" />
-                          </div>
-                          <div>
-                            <p className="font-bold text-lg text-green-600">
-                              {formatCurrency(payment.amount)}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              {format(new Date(payment.payment_date), "dd 'de' MMMM 'de' yyyy", { locale: es })}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <Badge variant="outline" className="mb-1">{payment.payment_type}</Badge>
-                          {payment.period_month && payment.period_year && (
-                            <p className="text-sm text-muted-foreground">
-                              Periodo: {payment.period_month}/{payment.period_year}
-                            </p>
-                          )}
-                          {payment.receipt_number && (
-                            <p className="text-xs text-muted-foreground">
-                              Recibo: {payment.receipt_number}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground text-center py-12">
-                    No hay pagos registrados
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* TAB INFO PERSONAL */}
-          <TabsContent value="info" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <User className="h-5 w-5" />
-                  Información Personal
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Nombre Completo</p>
-                  <p className="font-medium text-lg">
-                    {client.first_name} {client.last_name_paterno} {client.last_name_materno || ''}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Fecha de Alta</p>
-                  <p className="font-medium">
-                    {format(new Date(client.created_at), "dd 'de' MMMM 'de' yyyy", { locale: es })}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Phone className="h-5 w-5" />
-                  Teléfonos de Contacto
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Teléfono Principal</p>
-                    <p className="font-medium text-lg">{client.phone1}</p>
-                  </div>
-                  {client.phone2 && (
-                    <div>
-                      <p className="text-sm text-muted-foreground">Teléfono 2</p>
-                      <p className="font-medium text-lg">{client.phone2}</p>
-                    </div>
-                  )}
-                  {client.phone3 && (
-                    <div>
-                      <p className="text-sm text-muted-foreground">Teléfono 3</p>
-                      <p className="font-medium text-lg">{client.phone3}</p>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <MapPin className="h-5 w-5" />
-                  Dirección de Instalación
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-2">
-                    <p className="text-sm text-muted-foreground">Dirección Completa</p>
-                    <p className="font-medium text-lg">
-                      {client.street} {client.exterior_number}
-                      {client.interior_number && ` Int. ${client.interior_number}`}
+                    <p className="text-muted-foreground text-center py-8">
+                      No hay notas registradas
                     </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Colonia</p>
-                    <p className="font-medium">{client.neighborhood}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Ciudad</p>
-                    <p className="font-medium">{client.city}</p>
-                  </div>
-                  {client.postal_code && (
-                    <div>
-                      <p className="text-sm text-muted-foreground">Código Postal</p>
-                      <p className="font-medium">{client.postal_code}</p>
-                    </div>
                   )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* TAB DOCUMENTOS */}
-          <TabsContent value="documentos" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <FileText className="h-5 w-5" />
-                  Documentos del Cliente
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="space-y-3">
-                    <h4 className="font-semibold">INE Suscriptor</h4>
-                    <div className="flex gap-2">
-                      <Button
-                        variant={client.ine_subscriber_front ? 'default' : 'outline'}
-                        size="sm"
-                        disabled={!client.ine_subscriber_front}
-                        onClick={() => handleDownloadDocument(client.ine_subscriber_front)}
-                      >
-                        <Image className="h-4 w-4 mr-2" />
-                        Frente
-                      </Button>
-                      <Button
-                        variant={client.ine_subscriber_back ? 'default' : 'outline'}
-                        size="sm"
-                        disabled={!client.ine_subscriber_back}
-                        onClick={() => handleDownloadDocument(client.ine_subscriber_back)}
-                      >
-                        <Image className="h-4 w-4 mr-2" />
-                        Reverso
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <h4 className="font-semibold">INE Adicional</h4>
-                    <div className="flex gap-2">
-                      <Button
-                        variant={client.ine_other_front ? 'default' : 'outline'}
-                        size="sm"
-                        disabled={!client.ine_other_front}
-                        onClick={() => handleDownloadDocument(client.ine_other_front)}
-                      >
-                        <Image className="h-4 w-4 mr-2" />
-                        Frente
-                      </Button>
-                      <Button
-                        variant={client.ine_other_back ? 'default' : 'outline'}
-                        size="sm"
-                        disabled={!client.ine_other_back}
-                        onClick={() => handleDownloadDocument(client.ine_other_back)}
-                      >
-                        <Image className="h-4 w-4 mr-2" />
-                        Reverso
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 col-span-2">
-                    <h4 className="font-semibold">Contrato Firmado</h4>
-                    <div className="flex gap-2">
-                      <Button
-                        variant={client.contract_page1 ? 'default' : 'outline'}
-                        size="sm"
-                        disabled={!client.contract_page1}
-                        onClick={() => handleDownloadDocument(client.contract_page1)}
-                      >
-                        <FileText className="h-4 w-4 mr-2" />
-                        Página 1
-                      </Button>
-                      <Button
-                        variant={client.contract_page2 ? 'default' : 'outline'}
-                        size="sm"
-                        disabled={!client.contract_page2}
-                        onClick={() => handleDownloadDocument(client.contract_page2)}
-                      >
-                        <FileText className="h-4 w-4 mr-2" />
-                        Página 2
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </div>
       </DialogContent>
     </Dialog>
   );

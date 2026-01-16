@@ -354,7 +354,21 @@ export default function Clients() {
       <ClientDetailDialog
         client={selectedClient}
         open={showDetailDialog}
-        onOpenChange={setShowDetailDialog}
+        onOpenChange={(open) => {
+          setShowDetailDialog(open);
+          if (!open) {
+            refetch(); // Refresh data when dialog closes
+          }
+        }}
+        onRegisterPayment={() => {
+          setShowDetailDialog(false);
+          setShowPaymentDialog(true);
+        }}
+        onEdit={() => {
+          setShowDetailDialog(false);
+          setEditingClient(selectedClient);
+          setShowFormDialog(true);
+        }}
       />
 
       <ClientFormDialog
