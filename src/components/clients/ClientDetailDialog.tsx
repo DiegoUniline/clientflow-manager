@@ -281,11 +281,9 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
     enabled: open,
   });
 
-  if (!client) return null;
-
   // Use fetched billing data or fallback to client prop
-  const billing = billingData || client.client_billing as any;
-  const equipment = client.equipment?.[0] as any;
+  const billing = billingData || client?.client_billing as any;
+  const equipment = client?.equipment?.[0] as any;
   const billingDay = billing?.billing_day || 10;
   const nextBillingDate = getNextBillingDate(billingDay);
   
@@ -309,6 +307,70 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
   const monthsOfService = installDate 
     ? Math.floor((new Date().getTime() - installDate.getTime()) / (1000 * 60 * 60 * 24 * 30))
     : 0;
+
+  // Generar historial de mensualidades
+  const generateMensualidades = () => {
+    if (!billing?.installation_date) return [];
+    
+    const startDate = startOfMonth(new Date(billing.installation_date));
+    const endDate = startOfMonth(new Date());
+    const months = eachMonthOfInterval({ start: startDate, end: endDate });
+    
+    return months.map(date => {
+      const month = date.getMonth() + 1;
+      const year = date.getFullYear();
+      const monthPayments = payments.filter(p => 
+        p.period_month === month && p.period_year === year
+      );
+      const totalPaid = monthPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const monthlyFee = billing?.monthly_fee || 0;
+      const isPaid = totalPaid >= monthlyFee;
+      const isPartial = totalPaid > 0 && totalPaid < monthlyFee;
+      
+      // Find corresponding charge
+      const charge = mensualidadCharges.find((c: any) => 
+        c.description?.includes(`${month}/${year}`)
+      );
+      
+      return {
+        month,
+        year,
+        monthName: format(date, 'MMMM yyyy', { locale: es }),
+        monthlyFee,
+        totalPaid,
+        balance: monthlyFee - totalPaid,
+        isPaid,
+        isPartial,
+        payments: monthPayments,
+        charge,
+      };
+    }).reverse();
+  };
+
+  const mensualidades = generateMensualidades();
+  
+  // Get unique years for filter - MUST be before early return
+  const availableYears = useMemo(() => {
+    const years = new Set(mensualidades.map(m => m.year.toString()));
+    return Array.from(years).sort((a, b) => parseInt(b) - parseInt(a));
+  }, [mensualidades]);
+  
+  // Apply filters to mensualidades - MUST be before early return
+  const filteredMensualidades = useMemo(() => {
+    return mensualidades.filter(m => {
+      // Status filter
+      if (mensualidadFilter === 'paid' && !m.isPaid) return false;
+      if (mensualidadFilter === 'pending' && m.isPaid) return false;
+      
+      // Year filter
+      if (mensualidadYearFilter !== 'all' && m.year.toString() !== mensualidadYearFilter) return false;
+      
+      return true;
+    });
+  }, [mensualidades, mensualidadFilter, mensualidadYearFilter]);
+
+  // Early return AFTER all hooks
+  if (!client) return null;
 
   const getDocumentUrl = async (path: string | null) => {
     if (!path) return null;
@@ -403,67 +465,6 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
       setChargeDescription(selected.name);
     }
   };
-
-  // Generar historial de mensualidades
-  const generateMensualidades = () => {
-    if (!billing?.installation_date) return [];
-    
-    const startDate = startOfMonth(new Date(billing.installation_date));
-    const endDate = startOfMonth(new Date());
-    const months = eachMonthOfInterval({ start: startDate, end: endDate });
-    
-    return months.map(date => {
-      const month = date.getMonth() + 1;
-      const year = date.getFullYear();
-      const monthPayments = payments.filter(p => 
-        p.period_month === month && p.period_year === year
-      );
-      const totalPaid = monthPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-      const monthlyFee = billing?.monthly_fee || 0;
-      const isPaid = totalPaid >= monthlyFee;
-      const isPartial = totalPaid > 0 && totalPaid < monthlyFee;
-      
-      // Find corresponding charge
-      const charge = mensualidadCharges.find((c: any) => 
-        c.description?.includes(`${month}/${year}`)
-      );
-      
-      return {
-        month,
-        year,
-        monthName: format(date, 'MMMM yyyy', { locale: es }),
-        monthlyFee,
-        totalPaid,
-        balance: monthlyFee - totalPaid,
-        isPaid,
-        isPartial,
-        payments: monthPayments,
-        charge,
-      };
-    }).reverse();
-  };
-
-  const mensualidades = generateMensualidades();
-  
-  // Get unique years for filter
-  const availableYears = useMemo(() => {
-    const years = new Set(mensualidades.map(m => m.year.toString()));
-    return Array.from(years).sort((a, b) => parseInt(b) - parseInt(a));
-  }, [mensualidades]);
-  
-  // Apply filters to mensualidades
-  const filteredMensualidades = useMemo(() => {
-    return mensualidades.filter(m => {
-      // Status filter
-      if (mensualidadFilter === 'paid' && !m.isPaid) return false;
-      if (mensualidadFilter === 'pending' && m.isPaid) return false;
-      
-      // Year filter
-      if (mensualidadYearFilter !== 'all' && m.year.toString() !== mensualidadYearFilter) return false;
-      
-      return true;
-    });
-  }, [mensualidades, mensualidadFilter, mensualidadYearFilter]);
 
   // Agregar mensualidad manual
   const handleAddMensualidad = async () => {
