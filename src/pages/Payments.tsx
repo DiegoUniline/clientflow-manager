@@ -84,16 +84,18 @@ export default function Payments() {
 
   const columns = [
     {
+      key: 'date',
       header: 'Fecha',
-      accessor: (payment: PaymentWithClient) => (
+      render: (payment: PaymentWithClient) => (
         <span className="text-sm">
           {format(new Date(payment.payment_date), 'dd MMM yyyy', { locale: es })}
         </span>
       ),
     },
     {
+      key: 'client',
       header: 'Cliente',
-      accessor: (payment: PaymentWithClient) => (
+      render: (payment: PaymentWithClient) => (
         <div>
           <p className="font-medium">
             {payment.clients?.first_name} {payment.clients?.last_name_paterno}
@@ -107,16 +109,18 @@ export default function Payments() {
       ),
     },
     {
+      key: 'amount',
       header: 'Monto',
-      accessor: (payment: PaymentWithClient) => (
+      render: (payment: PaymentWithClient) => (
         <span className="font-bold text-green-600">
           ${payment.amount.toLocaleString()}
         </span>
       ),
     },
     {
+      key: 'type',
       header: 'Tipo',
-      accessor: (payment: PaymentWithClient) => (
+      render: (payment: PaymentWithClient) => (
         <div>
           <Badge variant="outline">{payment.payment_type}</Badge>
           {payment.bank_type && (
@@ -126,14 +130,16 @@ export default function Payments() {
       ),
     },
     {
+      key: 'receipt',
       header: 'Recibo',
-      accessor: (payment: PaymentWithClient) => (
+      render: (payment: PaymentWithClient) => (
         <span className="text-sm font-mono">{payment.receipt_number || '-'}</span>
       ),
     },
     {
+      key: 'actions',
       header: 'Acciones',
-      accessor: (payment: PaymentWithClient) => (
+      render: (payment: PaymentWithClient) => (
         <Button variant="ghost" size="icon" onClick={() => handleView(payment)} title="Ver detalles">
           <Eye className="h-4 w-4" />
         </Button>

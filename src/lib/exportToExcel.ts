@@ -36,3 +36,42 @@ export function exportToCSV<T>(
   link.click();
   document.body.removeChild(link);
 }
+
+// Función simplificada para exportar objetos con claves dinámicas
+export function exportToExcel<T extends Record<string, unknown>>(
+  data: T[],
+  filename: string
+) {
+  if (data.length === 0) {
+    alert('No hay datos para exportar');
+    return;
+  }
+
+  const headers = Object.keys(data[0]);
+  const headerRow = headers.join(',');
+
+  const rows = data.map(item => {
+    return headers.map(key => {
+      const value = item[key];
+      if (value === null || value === undefined) return '';
+      const stringValue = String(value);
+      if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+        return `"${stringValue.replace(/"/g, '""')}"`;
+      }
+      return stringValue;
+    }).join(',');
+  });
+
+  const csv = [headerRow, ...rows].join('\n');
+  const BOM = '\uFEFF';
+  const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8;' });
+
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  link.setAttribute('href', url);
+  link.setAttribute('download', `${filename}_${new Date().toISOString().split('T')[0]}.csv`);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}

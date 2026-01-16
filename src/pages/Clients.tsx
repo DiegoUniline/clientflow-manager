@@ -101,8 +101,9 @@ export default function Clients() {
 
   const columns = [
     {
+      key: 'name',
       header: 'Cliente',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <div>
           <p className="font-medium">
             {client.first_name} {client.last_name_paterno} {client.last_name_materno || ''}
@@ -112,8 +113,9 @@ export default function Clients() {
       ),
     },
     {
+      key: 'address',
       header: 'Dirección',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <div className="max-w-xs">
           <p className="text-sm truncate">
             {client.street} {client.exterior_number}
@@ -126,16 +128,18 @@ export default function Clients() {
       ),
     },
     {
+      key: 'monthly_fee',
       header: 'Mensualidad',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <span className="font-medium">
           ${client.client_billing?.monthly_fee?.toLocaleString() || '0'}
         </span>
       ),
     },
     {
+      key: 'balance',
       header: 'Saldo',
-      accessor: (client: ClientWithDetails) => {
+      render: (client: ClientWithDetails) => {
         const balance = client.client_billing?.balance || 0;
         return (
           <Badge variant={balance > 0 ? 'destructive' : 'secondary'}>
@@ -145,8 +149,9 @@ export default function Clients() {
       },
     },
     {
+      key: 'actions',
       header: 'Acciones',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <div className="flex gap-1">
           <Button variant="ghost" size="icon" onClick={() => handleView(client)} title="Ver detalles">
             <Eye className="h-4 w-4" />
