@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -35,13 +35,23 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { format, addMonths, isBefore, startOfDay, subMonths, startOfMonth, endOfMonth, eachMonthOfInterval } from 'date-fns';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { format, addMonths, isBefore, startOfDay, startOfMonth, eachMonthOfInterval } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { 
   User, MapPin, Phone, FileText, Wifi, DollarSign, 
   Calendar, Image, Plus, StickyNote, CreditCard, 
   Receipt, CheckCircle2, Clock, AlertCircle, Edit, Loader2,
-  History, ChevronDown, Settings, Router, CalendarClock, XCircle, PlayCircle
+  History, ChevronDown, Settings, Router, CalendarClock, Trash2, MoreHorizontal, RefreshCw, Filter
 } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { formatCurrency } from '@/lib/billing';
@@ -49,7 +59,7 @@ import { ChangePlanDialog } from './ChangePlanDialog';
 import { ChangeBillingDayDialog } from './ChangeBillingDayDialog';
 import { ChangeEquipmentDialog } from './ChangeEquipmentDialog';
 import { RelocationDialog } from './RelocationDialog';
-import type { Client, ClientBilling, Equipment, Payment, EquipmentHistory, PlanChangeHistory } from '@/types/database';
+import type { Client, ClientBilling, Equipment, Payment } from '@/types/database';
 
 type ClientWithDetails = Client & {
   client_billing: ClientBilling | null;
@@ -84,6 +94,23 @@ function generateClientCode(id: string): string {
   return `#CLI${id.slice(0, 6).toUpperCase()}`;
 }
 
+const SERVICE_TYPES: Record<string, { label: string; color: string }> = {
+  installation: { label: 'Instalación', color: 'bg-blue-500' },
+  maintenance: { label: 'Mantenimiento', color: 'bg-yellow-500' },
+  equipment_change: { label: 'Cambio de Equipo', color: 'bg-purple-500' },
+  relocation: { label: 'Reubicación', color: 'bg-orange-500' },
+  repair: { label: 'Reparación', color: 'bg-red-500' },
+  disconnection: { label: 'Desconexión', color: 'bg-gray-500' },
+  other: { label: 'Otro', color: 'bg-slate-500' },
+};
+
+const SERVICE_STATUS: Record<string, { label: string; color: string }> = {
+  scheduled: { label: 'Programado', color: 'bg-blue-500' },
+  in_progress: { label: 'En Progreso', color: 'bg-yellow-500' },
+  completed: { label: 'Completado', color: 'bg-green-500' },
+  cancelled: { label: 'Cancelado', color: 'bg-red-500' },
+};
+
 export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayment, onEdit }: ClientDetailDialogProps) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -107,6 +134,22 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
   const [mensualidadYear, setMensualidadYear] = useState(new Date().getFullYear());
   const [mensualidadAmount, setMensualidadAmount] = useState('');
   
+  // Mensualidad filters
+  const [mensualidadFilter, setMensualidadFilter] = useState<'all' | 'pending' | 'paid'>('all');
+  const [mensualidadYearFilter, setMensualidadYearFilter] = useState<string>('all');
+  
+  // Mensualidad edit states
+  const [editingCharge, setEditingCharge] = useState<any>(null);
+  const [editChargeAmount, setEditChargeAmount] = useState('');
+  const [editChargeDescription, setEditChargeDescription] = useState('');
+  
+  // Delete confirmation
+  const [chargeToDelete, setChargeToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Auto-generate mensualidades
+  const [isGeneratingMensualidades, setIsGeneratingMensualidades] = useState(false);
+  
   // Service states
   const [isAddingService, setIsAddingService] = useState(false);
   const [newServiceData, setNewServiceData] = useState({
@@ -116,7 +159,12 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
     scheduled_date: format(new Date(), 'yyyy-MM-dd'),
     scheduled_time: '09:00',
     charge_amount: 0,
+    assigned_to: '',
   });
+  
+  // Edit service states
+  const [editingService, setEditingService] = useState<any>(null);
+  const [isUpdatingService, setIsUpdatingService] = useState(false);
 
   // Fetch billing (to get updated balance)
   const { data: billingData, refetch: refetchBilling } = useQuery({
@@ -251,6 +299,11 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
   const pendingCharges = charges.filter((c: any) => c.status === 'pending');
   const totalPendingCharges = pendingCharges.reduce((sum: number, c: any) => sum + c.amount, 0);
 
+  // Mensualidad charges (filter only monthly charges)
+  const mensualidadCharges = charges.filter((c: any) => 
+    c.description?.toLowerCase().includes('mensualidad')
+  );
+
   // Calcular meses de servicio
   const installDate = billing?.installation_date ? new Date(billing.installation_date) : null;
   const monthsOfService = installDate 
@@ -370,6 +423,11 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
       const isPaid = totalPaid >= monthlyFee;
       const isPartial = totalPaid > 0 && totalPaid < monthlyFee;
       
+      // Find corresponding charge
+      const charge = mensualidadCharges.find((c: any) => 
+        c.description?.includes(`${month}/${year}`)
+      );
+      
       return {
         month,
         year,
@@ -380,11 +438,32 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
         isPaid,
         isPartial,
         payments: monthPayments,
+        charge,
       };
     }).reverse();
   };
 
   const mensualidades = generateMensualidades();
+  
+  // Get unique years for filter
+  const availableYears = useMemo(() => {
+    const years = new Set(mensualidades.map(m => m.year.toString()));
+    return Array.from(years).sort((a, b) => parseInt(b) - parseInt(a));
+  }, [mensualidades]);
+  
+  // Apply filters to mensualidades
+  const filteredMensualidades = useMemo(() => {
+    return mensualidades.filter(m => {
+      // Status filter
+      if (mensualidadFilter === 'paid' && !m.isPaid) return false;
+      if (mensualidadFilter === 'pending' && m.isPaid) return false;
+      
+      // Year filter
+      if (mensualidadYearFilter !== 'all' && m.year.toString() !== mensualidadYearFilter) return false;
+      
+      return true;
+    });
+  }, [mensualidades, mensualidadFilter, mensualidadYearFilter]);
 
   // Agregar mensualidad manual
   const handleAddMensualidad = async () => {
@@ -430,6 +509,147 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
       setIsAddingMensualidad(false);
     }
   };
+  
+  // Edit mensualidad charge
+  const handleEditCharge = async () => {
+    if (!editingCharge || !editChargeAmount || !client.id) return;
+    
+    try {
+      const amount = parseFloat(editChargeAmount);
+      const oldAmount = editingCharge.amount;
+      const difference = amount - oldAmount;
+      
+      // Update charge
+      const { error: chargeError } = await supabase
+        .from('client_charges')
+        .update({ 
+          amount, 
+          description: editChargeDescription 
+        })
+        .eq('id', editingCharge.id);
+      
+      if (chargeError) throw chargeError;
+      
+      // Update balance if amount changed and charge is pending
+      if (difference !== 0 && editingCharge.status === 'pending' && billing) {
+        const newBalance = (billing.balance || 0) + difference;
+        await supabase
+          .from('client_billing')
+          .update({ balance: newBalance })
+          .eq('client_id', client.id);
+      }
+      
+      toast.success('Cargo actualizado');
+      setEditingCharge(null);
+      refetchCharges();
+      refetchBilling();
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    } catch (error: any) {
+      toast.error(error.message || 'Error al actualizar cargo');
+    }
+  };
+  
+  // Delete mensualidad charge
+  const handleDeleteCharge = async () => {
+    if (!chargeToDelete || !client.id) return;
+    
+    setIsDeleting(true);
+    try {
+      const chargeToRemove = charges.find((c: any) => c.id === chargeToDelete);
+      
+      // Delete charge
+      const { error: deleteError } = await supabase
+        .from('client_charges')
+        .delete()
+        .eq('id', chargeToDelete);
+      
+      if (deleteError) throw deleteError;
+      
+      // Update balance if charge was pending
+      if (chargeToRemove?.status === 'pending' && billing) {
+        const newBalance = (billing.balance || 0) - chargeToRemove.amount;
+        await supabase
+          .from('client_billing')
+          .update({ balance: newBalance })
+          .eq('client_id', client.id);
+      }
+      
+      toast.success('Cargo eliminado');
+      setChargeToDelete(null);
+      refetchCharges();
+      refetchBilling();
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    } catch (error: any) {
+      toast.error(error.message || 'Error al eliminar cargo');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+  
+  // Auto-generate mensualidades
+  const handleAutoGenerateMensualidades = async () => {
+    if (!client.id || !billing || client.status !== 'active') return;
+    
+    setIsGeneratingMensualidades(true);
+    try {
+      const startDate = startOfMonth(new Date(billing.installation_date));
+      const endDate = startOfMonth(new Date());
+      const months = eachMonthOfInterval({ start: startDate, end: endDate });
+      
+      const newCharges: any[] = [];
+      
+      for (const date of months) {
+        const month = date.getMonth() + 1;
+        const year = date.getFullYear();
+        const description = `Mensualidad ${month}/${year}`;
+        
+        // Check if charge already exists
+        const exists = charges.some((c: any) => 
+          c.description === description
+        );
+        
+        if (!exists) {
+          newCharges.push({
+            client_id: client.id,
+            description,
+            amount: billing.monthly_fee,
+            status: 'pending',
+            created_by: user?.id,
+          });
+        }
+      }
+      
+      if (newCharges.length === 0) {
+        toast.info('Todas las mensualidades ya están generadas');
+        setIsGeneratingMensualidades(false);
+        return;
+      }
+      
+      // Insert all charges
+      const { error: chargeError } = await supabase
+        .from('client_charges')
+        .insert(newCharges);
+      
+      if (chargeError) throw chargeError;
+      
+      // Update balance
+      const totalNewCharges = newCharges.reduce((sum, c) => sum + c.amount, 0);
+      const newBalance = (billing.balance || 0) + totalNewCharges;
+      await supabase
+        .from('client_billing')
+        .update({ balance: newBalance })
+        .eq('client_id', client.id);
+      
+      toast.success(`${newCharges.length} mensualidades generadas`);
+      refetchCharges();
+      refetchBilling();
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    } catch (error: any) {
+      toast.error(error.message || 'Error al generar mensualidades');
+    } finally {
+      setIsGeneratingMensualidades(false);
+    }
+  };
 
   // Crear servicio para este cliente
   const handleAddClientService = async () => {
@@ -438,11 +658,16 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
       return;
     }
     
+    if (!newServiceData.assigned_to) {
+      toast.error('Debe asignar un empleado');
+      return;
+    }
+    
     setIsAddingService(true);
     try {
       const { error } = await supabase.from('scheduled_services').insert([{
         client_id: client.id,
-        assigned_to: user?.id || '',
+        assigned_to: newServiceData.assigned_to,
         service_type: newServiceData.service_type as 'installation' | 'maintenance' | 'equipment_change' | 'relocation' | 'repair' | 'disconnection' | 'other',
         title: newServiceData.title,
         description: newServiceData.description || null,
@@ -462,6 +687,7 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
         scheduled_date: format(new Date(), 'yyyy-MM-dd'),
         scheduled_time: '09:00',
         charge_amount: 0,
+        assigned_to: '',
       });
       refetchServices();
       queryClient.invalidateQueries({ queryKey: ['scheduled-services'] });
@@ -471,22 +697,56 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
       setIsAddingService(false);
     }
   };
-
-  const SERVICE_TYPES: Record<string, { label: string; color: string }> = {
-    installation: { label: 'Instalación', color: 'bg-blue-500' },
-    maintenance: { label: 'Mantenimiento', color: 'bg-yellow-500' },
-    equipment_change: { label: 'Cambio de Equipo', color: 'bg-purple-500' },
-    relocation: { label: 'Reubicación', color: 'bg-orange-500' },
-    repair: { label: 'Reparación', color: 'bg-red-500' },
-    disconnection: { label: 'Desconexión', color: 'bg-gray-500' },
-    other: { label: 'Otro', color: 'bg-slate-500' },
+  
+  // Update service
+  const handleUpdateService = async () => {
+    if (!editingService) return;
+    
+    setIsUpdatingService(true);
+    try {
+      const { error } = await supabase
+        .from('scheduled_services')
+        .update({
+          service_type: editingService.service_type,
+          title: editingService.title,
+          description: editingService.description,
+          scheduled_date: editingService.scheduled_date,
+          scheduled_time: editingService.scheduled_time,
+          charge_amount: editingService.charge_amount,
+          assigned_to: editingService.assigned_to,
+          status: editingService.status,
+        })
+        .eq('id', editingService.id);
+      
+      if (error) throw error;
+      
+      toast.success('Servicio actualizado');
+      setEditingService(null);
+      refetchServices();
+      queryClient.invalidateQueries({ queryKey: ['scheduled-services'] });
+    } catch (error: any) {
+      toast.error(error.message || 'Error al actualizar servicio');
+    } finally {
+      setIsUpdatingService(false);
+    }
   };
-
-  const SERVICE_STATUS: Record<string, { label: string; color: string }> = {
-    scheduled: { label: 'Programado', color: 'bg-blue-500' },
-    in_progress: { label: 'En Progreso', color: 'bg-yellow-500' },
-    completed: { label: 'Completado', color: 'bg-green-500' },
-    cancelled: { label: 'Cancelado', color: 'bg-red-500' },
+  
+  // Cancel service
+  const handleCancelService = async (serviceId: string) => {
+    try {
+      const { error } = await supabase
+        .from('scheduled_services')
+        .update({ status: 'cancelled' })
+        .eq('id', serviceId);
+      
+      if (error) throw error;
+      
+      toast.success('Servicio cancelado');
+      refetchServices();
+      queryClient.invalidateQueries({ queryKey: ['scheduled-services'] });
+    } catch (error: any) {
+      toast.error(error.message || 'Error al cancelar servicio');
+    }
   };
 
   return (
@@ -808,10 +1068,22 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
               {/* Cargar mensualidad manual */}
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <Plus className="h-5 w-5" />
-                    Cargar Mensualidad Manual
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Plus className="h-5 w-5" />
+                      Cargar Mensualidad Manual
+                    </CardTitle>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={handleAutoGenerateMensualidades}
+                      disabled={isGeneratingMensualidades || client.status !== 'active'}
+                    >
+                      {isGeneratingMensualidades && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Generar Mensualidades Automáticas
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-4 gap-3 items-end">
@@ -871,6 +1143,42 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                 </CardContent>
               </Card>
 
+              {/* Filtros */}
+              <Card>
+                <CardContent className="py-3">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <Filter className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">Filtros:</span>
+                    </div>
+                    <Select value={mensualidadFilter} onValueChange={(v: any) => setMensualidadFilter(v)}>
+                      <SelectTrigger className="w-[150px]">
+                        <SelectValue placeholder="Estado" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos</SelectItem>
+                        <SelectItem value="paid">Pagados</SelectItem>
+                        <SelectItem value="pending">Pendientes</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={mensualidadYearFilter} onValueChange={setMensualidadYearFilter}>
+                      <SelectTrigger className="w-[120px]">
+                        <SelectValue placeholder="Año" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos</SelectItem>
+                        {availableYears.map(year => (
+                          <SelectItem key={year} value={year}>{year}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <span className="text-sm text-muted-foreground ml-auto">
+                      Mostrando {filteredMensualidades.length} de {mensualidades.length}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* Historial de mensualidades */}
               <Card>
                 <CardHeader className="pb-3">
@@ -880,7 +1188,7 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {mensualidades.length > 0 ? (
+                  {filteredMensualidades.length > 0 ? (
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -889,10 +1197,11 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                           <TableHead>PAGADO</TableHead>
                           <TableHead>PENDIENTE</TableHead>
                           <TableHead>ESTATUS</TableHead>
+                          <TableHead className="text-right">ACCIONES</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {mensualidades.map((m) => (
+                        {filteredMensualidades.map((m) => (
                           <TableRow key={`${m.month}-${m.year}`}>
                             <TableCell className="font-medium capitalize">{m.monthName}</TableCell>
                             <TableCell>{formatCurrency(m.monthlyFee)}</TableCell>
@@ -916,6 +1225,34 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                                   <AlertCircle className="h-3 w-3 mr-1" />
                                   Pendiente
                                 </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {m.charge && (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => {
+                                      setEditingCharge(m.charge);
+                                      setEditChargeAmount(m.charge.amount.toString());
+                                      setEditChargeDescription(m.charge.description);
+                                    }}>
+                                      <Edit className="h-4 w-4 mr-2" />
+                                      Editar
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem 
+                                      className="text-red-600"
+                                      onClick={() => setChargeToDelete(m.charge.id)}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Eliminar
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                               )}
                             </TableCell>
                           </TableRow>
@@ -968,7 +1305,7 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                       />
                     </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-4 mb-4">
+                  <div className="grid grid-cols-4 gap-4 mb-4">
                     <div className="space-y-2">
                       <Label>Fecha</Label>
                       <Input
@@ -994,6 +1331,22 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                         placeholder="0"
                       />
                     </div>
+                    <div className="space-y-2">
+                      <Label>Asignar a</Label>
+                      <Select 
+                        value={newServiceData.assigned_to} 
+                        onValueChange={(v) => setNewServiceData({ ...newServiceData, assigned_to: v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Seleccionar..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {employees.map((emp: any) => (
+                            <SelectItem key={emp.user_id} value={emp.user_id}>{emp.full_name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <div className="space-y-2 mb-4">
                     <Label>Descripción</Label>
@@ -1004,7 +1357,7 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                       rows={2}
                     />
                   </div>
-                  <Button onClick={handleAddClientService} disabled={isAddingService || !newServiceData.title}>
+                  <Button onClick={handleAddClientService} disabled={isAddingService || !newServiceData.title || !newServiceData.assigned_to}>
                     {isAddingService && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                     <Plus className="h-4 w-4 mr-2" />
                     Agendar Servicio
@@ -1030,6 +1383,7 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                           <TableHead>TÍTULO</TableHead>
                           <TableHead>CARGO</TableHead>
                           <TableHead>ESTATUS</TableHead>
+                          <TableHead className="text-right">ACCIONES</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1057,6 +1411,30 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                                 <Badge className={`${statusInfo.color} text-white`}>
                                   {statusInfo.label}
                                 </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => setEditingService(service)}>
+                                      <Edit className="h-4 w-4 mr-2" />
+                                      Editar
+                                    </DropdownMenuItem>
+                                    {service.status !== 'cancelled' && service.status !== 'completed' && (
+                                      <DropdownMenuItem 
+                                        className="text-red-600"
+                                        onClick={() => handleCancelService(service.id)}
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Cancelar
+                                      </DropdownMenuItem>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                               </TableCell>
                             </TableRow>
                           );
@@ -1448,6 +1826,172 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
             queryClient.invalidateQueries({ queryKey: ['clients'] });
           }}
         />
+        
+        {/* Edit Charge Dialog */}
+        <Dialog open={!!editingCharge} onOpenChange={(open) => !open && setEditingCharge(null)}>
+          <DialogContent className="max-w-md">
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold">Editar Cargo</h2>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Descripción</Label>
+                  <Input
+                    value={editChargeDescription}
+                    onChange={(e) => setEditChargeDescription(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Monto</Label>
+                  <Input
+                    type="number"
+                    value={editChargeAmount}
+                    onChange={(e) => setEditChargeAmount(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setEditingCharge(null)}>
+                  Cancelar
+                </Button>
+                <Button onClick={handleEditCharge}>
+                  Guardar
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+        
+        {/* Edit Service Dialog */}
+        <Dialog open={!!editingService} onOpenChange={(open) => !open && setEditingService(null)}>
+          <DialogContent className="max-w-lg">
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold">Editar Servicio</h2>
+              {editingService && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Tipo de Servicio</Label>
+                      <Select 
+                        value={editingService.service_type} 
+                        onValueChange={(v) => setEditingService({ ...editingService, service_type: v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(SERVICE_TYPES).map(([key, val]) => (
+                            <SelectItem key={key} value={key}>{val.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Estado</Label>
+                      <Select 
+                        value={editingService.status} 
+                        onValueChange={(v) => setEditingService({ ...editingService, status: v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(SERVICE_STATUS).map(([key, val]) => (
+                            <SelectItem key={key} value={key}>{val.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Título</Label>
+                    <Input
+                      value={editingService.title}
+                      onChange={(e) => setEditingService({ ...editingService, title: e.target.value })}
+                    />
+                  </div>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label>Fecha</Label>
+                      <Input
+                        type="date"
+                        value={editingService.scheduled_date}
+                        onChange={(e) => setEditingService({ ...editingService, scheduled_date: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Hora</Label>
+                      <Input
+                        type="time"
+                        value={editingService.scheduled_time || ''}
+                        onChange={(e) => setEditingService({ ...editingService, scheduled_time: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Cargo ($)</Label>
+                      <Input
+                        type="number"
+                        value={editingService.charge_amount || 0}
+                        onChange={(e) => setEditingService({ ...editingService, charge_amount: parseFloat(e.target.value) || 0 })}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Asignar a</Label>
+                    <Select 
+                      value={editingService.assigned_to} 
+                      onValueChange={(v) => setEditingService({ ...editingService, assigned_to: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleccionar..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {employees.map((emp: any) => (
+                          <SelectItem key={emp.user_id} value={emp.user_id}>{emp.full_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Descripción</Label>
+                    <Textarea
+                      value={editingService.description || ''}
+                      onChange={(e) => setEditingService({ ...editingService, description: e.target.value })}
+                      rows={2}
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setEditingService(null)}>
+                  Cancelar
+                </Button>
+                <Button onClick={handleUpdateService} disabled={isUpdatingService}>
+                  {isUpdatingService && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Guardar
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+        
+        {/* Delete Charge Confirmation */}
+        <AlertDialog open={!!chargeToDelete} onOpenChange={(open) => !open && setChargeToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>¿Eliminar cargo?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esta acción no se puede deshacer. El cargo será eliminado permanentemente y el saldo del cliente se actualizará.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction onClick={handleDeleteCharge} disabled={isDeleting}>
+                {isDeleting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Eliminar
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
