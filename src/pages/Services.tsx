@@ -79,7 +79,7 @@ interface ScheduledService {
   created_at: string;
   clients?: { first_name: string; last_name_paterno: string; street: string; exterior_number: string; neighborhood: string } | null;
   prospects?: { first_name: string; last_name_paterno: string; street: string; exterior_number: string; neighborhood: string } | null;
-  profiles?: { full_name: string } | null;
+  employee_name?: string;
 }
 
 export default function Services() {
@@ -113,8 +113,7 @@ export default function Services() {
         .select(`
           *,
           clients(first_name, last_name_paterno, street, exterior_number, neighborhood),
-          prospects(first_name, last_name_paterno, street, exterior_number, neighborhood),
-          profiles!scheduled_services_assigned_to_fkey(full_name)
+          prospects(first_name, last_name_paterno, street, exterior_number, neighborhood)
         `)
         .order('scheduled_date', { ascending: true });
 
@@ -124,7 +123,26 @@ export default function Services() {
 
       const { data, error } = await query;
       if (error) throw error;
-      return data as unknown as ScheduledService[];
+      
+      // Fetch employee names separately
+      const assignedIds = [...new Set(data?.map(s => s.assigned_to).filter(Boolean) || [])];
+      let employeeMap: Record<string, string> = {};
+      
+      if (assignedIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('user_id, full_name')
+          .in('user_id', assignedIds);
+        
+        profiles?.forEach(p => {
+          employeeMap[p.user_id] = p.full_name;
+        });
+      }
+      
+      return (data || []).map(service => ({
+        ...service,
+        employee_name: employeeMap[service.assigned_to] || 'Sin asignar'
+      })) as unknown as ScheduledService[];
     },
   });
 
@@ -403,7 +421,7 @@ export default function Services() {
                         )}
                         <div className="flex items-center gap-2 text-sm">
                           <Wrench className="h-4 w-4 text-muted-foreground" />
-                          <span>Asignado a: {service.profiles?.full_name || 'Sin asignar'}</span>
+                          <span>Asignado a: {service.employee_name || 'Sin asignar'}</span>
                         </div>
                         {service.charge_amount && service.charge_amount > 0 && (
                           <div className="flex items-center gap-2 text-sm">
