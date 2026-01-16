@@ -19,6 +19,7 @@ import Catalogs from "./pages/Catalogs";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import Services from "./pages/Services";
+import Mensualidades from "./pages/Mensualidades";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -42,6 +43,7 @@ const App = () => (
               <Route path="/clients/history" element={<ProtectedRoute><ClientsHistory /></ProtectedRoute>} />
               <Route path="/clients/debt" element={<ProtectedRoute><ClientDebt /></ProtectedRoute>} />
               <Route path="/payments" element={<ProtectedRoute><Payments /></ProtectedRoute>} />
+              <Route path="/mensualidades" element={<ProtectedRoute><Mensualidades /></ProtectedRoute>} />
               <Route path="/services" element={<ProtectedRoute><Services /></ProtectedRoute>} />
               <Route path="/catalogs" element={<ProtectedRoute><Catalogs /></ProtectedRoute>} />
               <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
