@@ -80,8 +80,9 @@ export default function ClientDebt() {
 
   const columns = [
     {
+      key: 'name',
       header: 'Cliente',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <div>
           <p className="font-medium">
             {client.first_name} {client.last_name_paterno} {client.last_name_materno || ''}
@@ -91,8 +92,9 @@ export default function ClientDebt() {
       ),
     },
     {
+      key: 'address',
       header: 'Dirección',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <div className="max-w-xs">
           <p className="text-sm truncate">
             {client.street} {client.exterior_number}
@@ -104,24 +106,27 @@ export default function ClientDebt() {
       ),
     },
     {
+      key: 'monthly_fee',
       header: 'Mensualidad',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <span className="font-medium">
           ${client.client_billing?.monthly_fee?.toLocaleString() || '0'}
         </span>
       ),
     },
     {
+      key: 'balance',
       header: 'Saldo Deudor',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <Badge variant="destructive" className="text-base">
           ${(client.client_billing?.balance || 0).toLocaleString()}
         </Badge>
       ),
     },
     {
+      key: 'actions',
       header: 'Acciones',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <Button
           variant="outline"
           size="sm"

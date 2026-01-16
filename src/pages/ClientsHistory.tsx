@@ -71,8 +71,9 @@ export default function ClientsHistory() {
 
   const columns = [
     {
+      key: 'name',
       header: 'Cliente',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <div>
           <p className="font-medium">
             {client.first_name} {client.last_name_paterno} {client.last_name_materno || ''}
@@ -82,8 +83,9 @@ export default function ClientsHistory() {
       ),
     },
     {
+      key: 'address',
       header: 'Dirección',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <div className="max-w-xs">
           <p className="text-sm truncate">
             {client.street} {client.exterior_number}
@@ -95,8 +97,9 @@ export default function ClientsHistory() {
       ),
     },
     {
+      key: 'cancelled_at',
       header: 'Fecha Cancelación',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <span className="text-sm">
           {client.cancelled_at
             ? format(new Date(client.cancelled_at), 'dd MMM yyyy', { locale: es })
@@ -105,20 +108,23 @@ export default function ClientsHistory() {
       ),
     },
     {
+      key: 'reason',
       header: 'Motivo',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <p className="text-sm max-w-xs truncate" title={client.cancellation_reason || ''}>
           {client.cancellation_reason || '-'}
         </p>
       ),
     },
     {
+      key: 'status',
       header: 'Estado',
-      accessor: () => <Badge variant="destructive">Cancelado</Badge>,
+      render: () => <Badge variant="destructive">Cancelado</Badge>,
     },
     {
+      key: 'actions',
       header: 'Acciones',
-      accessor: (client: ClientWithDetails) => (
+      render: (client: ClientWithDetails) => (
         <Button variant="ghost" size="icon" onClick={() => handleView(client)} title="Ver detalles">
           <Eye className="h-4 w-4" />
         </Button>
