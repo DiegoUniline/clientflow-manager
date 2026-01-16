@@ -618,33 +618,23 @@ export default function ClientDetail() {
   return (
     <AppLayout>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/clients')}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div className="flex-1" />
-          {isEditing ? (
+        {/* Edit mode action bar - only shows when editing */}
+        {isEditing && (
+          <div className="flex items-center justify-between bg-primary/5 border border-primary/20 rounded-lg p-3">
+            <span className="text-sm font-medium text-primary">Modo edición activo</span>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={handleCancelEdit} disabled={isSaving}>
-                <X className="h-4 w-4 mr-2" />
+              <Button variant="outline" size="sm" onClick={handleCancelEdit} disabled={isSaving}>
+                <X className="h-4 w-4 mr-1" />
                 Cancelar
               </Button>
-              <Button onClick={handleSave} disabled={isSaving}>
-                {isSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                <Save className="h-4 w-4 mr-2" />
-                Guardar Cambios
+              <Button size="sm" onClick={handleSave} disabled={isSaving}>
+                {isSaving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                <Save className="h-4 w-4 mr-1" />
+                Guardar
               </Button>
             </div>
-          ) : (
-            isAdmin && (
-              <Button onClick={() => setIsEditing(true)}>
-                <Edit className="h-4 w-4 mr-2" />
-                Editar
-              </Button>
-            )
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Client Header Card */}
         <Card>
@@ -795,17 +785,21 @@ export default function ClientDetail() {
                 
                 {/* Action buttons - only when not editing */}
                 {!isEditing && (
-                  <div className="flex gap-3 mt-4">
-                    <Button onClick={() => setShowPaymentDialog(true)} className="bg-emerald-600 hover:bg-emerald-700">
-                      <DollarSign className="h-4 w-4 mr-2" />
+                  <div className="flex gap-2 mt-4">
+                    <Button variant="ghost" size="sm" onClick={() => navigate('/clients')}>
+                      <ArrowLeft className="h-4 w-4 mr-1" />
+                      Volver
+                    </Button>
+                    <Button onClick={() => setShowPaymentDialog(true)} size="sm" className="bg-emerald-600 hover:bg-emerald-700">
+                      <DollarSign className="h-4 w-4 mr-1" />
                       Registrar Pago
                     </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="outline">
-                          <Settings className="h-4 w-4 mr-2" />
-                          Gestionar Servicio
-                          <ChevronDown className="h-4 w-4 ml-2" />
+                        <Button variant="outline" size="sm">
+                          <Settings className="h-4 w-4 mr-1" />
+                          Gestionar
+                          <ChevronDown className="h-4 w-4 ml-1" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start">
@@ -827,6 +821,12 @@ export default function ClientDetail() {
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    {isAdmin && (
+                      <Button variant="outline" size="sm" onClick={() => setIsEditing(true)}>
+                        <Edit className="h-4 w-4 mr-1" />
+                        Editar
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
