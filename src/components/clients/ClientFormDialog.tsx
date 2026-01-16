@@ -18,11 +18,15 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
+  FormDescription,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Upload } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
+import { Loader2, Upload, Calculator } from 'lucide-react';
+import { calculateProration, formatCurrency, calculateInitialBalance } from '@/lib/billing';
 import type { Client, ClientBilling, Equipment } from '@/types/database';
 
 type ClientWithDetails = Client & {
@@ -49,8 +53,10 @@ const clientSchema = z.object({
   monthly_fee: z.number().min(0, 'La mensualidad debe ser mayor a 0'),
   installation_cost: z.number().min(0),
   installation_date: z.string().min(1, 'La fecha de instalación es requerida'),
-  first_billing_date: z.string().min(1, 'La fecha de primer cobro es requerida'),
-  // Equipment
+  billing_day: z.number().min(1).max(28, 'El día de corte debe ser entre 1 y 28'),
+  additional_charges: z.number().min(0),
+  additional_charges_notes: z.string().optional(),
+  // Equipment - Router
   router_brand: z.string().optional(),
   router_model: z.string().optional(),
   router_mac: z.string().optional(),
@@ -58,11 +64,13 @@ const clientSchema = z.object({
   router_serial: z.string().optional(),
   router_network_name: z.string().optional(),
   router_password: z.string().optional(),
+  // Equipment - Antenna
   antenna_brand: z.string().optional(),
   antenna_model: z.string().optional(),
   antenna_mac: z.string().optional(),
   antenna_ip: z.string().optional(),
   antenna_ssid: z.string().optional(),
+  antenna_serial: z.string().optional(),
   installer_name: z.string().optional(),
 });
 
@@ -79,6 +87,13 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('personal');
+  const [prorationPreview, setProrationPreview] = useState<{
+    proratedAmount: number;
+    daysCharged: number;
+    firstBillingDate: Date;
+    totalInitial: number;
+  } | null>(null);
+  
   const [documents, setDocuments] = useState<{
     ine_subscriber_front: File | null;
     ine_subscriber_back: File | null;
@@ -113,7 +128,9 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
       monthly_fee: 0,
       installation_cost: 0,
       installation_date: new Date().toISOString().split('T')[0],
-      first_billing_date: new Date().toISOString().split('T')[0],
+      billing_day: 10,
+      additional_charges: 0,
+      additional_charges_notes: '',
       router_brand: '',
       router_model: '',
       router_mac: '',
@@ -126,9 +143,38 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
       antenna_mac: '',
       antenna_ip: '',
       antenna_ssid: '',
+      antenna_serial: '',
       installer_name: '',
     },
   });
+
+  // Watch billing fields for proration calculation
+  const watchedFields = form.watch(['installation_date', 'billing_day', 'monthly_fee', 'installation_cost', 'additional_charges']);
+
+  useEffect(() => {
+    const [installationDate, billingDay, monthlyFee, installationCost, additionalCharges] = watchedFields;
+    
+    if (installationDate && billingDay && monthlyFee > 0) {
+      const proration = calculateProration(
+        new Date(installationDate),
+        billingDay,
+        monthlyFee
+      );
+      
+      const totalInitial = calculateInitialBalance(
+        proration.proratedAmount,
+        installationCost || 0,
+        additionalCharges || 0
+      );
+
+      setProrationPreview({
+        ...proration,
+        totalInitial,
+      });
+    } else {
+      setProrationPreview(null);
+    }
+  }, [watchedFields]);
 
   useEffect(() => {
     if (client) {
@@ -151,7 +197,9 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
         monthly_fee: billing?.monthly_fee || 0,
         installation_cost: billing?.installation_cost || 0,
         installation_date: billing?.installation_date || new Date().toISOString().split('T')[0],
-        first_billing_date: billing?.first_billing_date || new Date().toISOString().split('T')[0],
+        billing_day: (billing as any)?.billing_day || 10,
+        additional_charges: (billing as any)?.additional_charges || 0,
+        additional_charges_notes: (billing as any)?.additional_charges_notes || '',
         router_brand: equipment?.router_brand || '',
         router_model: equipment?.router_model || '',
         router_mac: equipment?.router_mac || '',
@@ -164,6 +212,7 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
         antenna_mac: equipment?.antenna_mac || '',
         antenna_ip: equipment?.antenna_ip || '',
         antenna_ssid: equipment?.antenna_ssid || '',
+        antenna_serial: (equipment as any)?.antenna_serial || '',
         installer_name: equipment?.installer_name || '',
       });
     } else {
@@ -183,7 +232,9 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
         monthly_fee: 0,
         installation_cost: 0,
         installation_date: new Date().toISOString().split('T')[0],
-        first_billing_date: new Date().toISOString().split('T')[0],
+        billing_day: 10,
+        additional_charges: 0,
+        additional_charges_notes: '',
         router_brand: '',
         router_model: '',
         router_mac: '',
@@ -196,6 +247,7 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
         antenna_mac: '',
         antenna_ip: '',
         antenna_ssid: '',
+        antenna_serial: '',
         installer_name: '',
       });
     }
@@ -230,6 +282,19 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
     try {
       let clientId = client?.id;
 
+      // Calculate proration for new clients
+      const proration = calculateProration(
+        new Date(data.installation_date),
+        data.billing_day,
+        data.monthly_fee
+      );
+      
+      const initialBalance = calculateInitialBalance(
+        proration.proratedAmount,
+        data.installation_cost,
+        data.additional_charges
+      );
+
       if (client) {
         // Update existing client
         const { error: clientError } = await supabase
@@ -260,7 +325,11 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
               monthly_fee: data.monthly_fee,
               installation_cost: data.installation_cost,
               installation_date: data.installation_date,
-              first_billing_date: data.first_billing_date,
+              first_billing_date: proration.firstBillingDate.toISOString().split('T')[0],
+              billing_day: data.billing_day,
+              prorated_amount: proration.proratedAmount,
+              additional_charges: data.additional_charges,
+              additional_charges_notes: data.additional_charges_notes || null,
             })
             .eq('id', client.client_billing.id);
 
@@ -285,6 +354,7 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
               antenna_mac: data.antenna_mac || null,
               antenna_ip: data.antenna_ip || null,
               antenna_ssid: data.antenna_ssid || null,
+              antenna_serial: data.antenna_serial || null,
               installer_name: data.installer_name || null,
               installation_date: data.installation_date,
             })
@@ -318,7 +388,7 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
         if (clientError) throw clientError;
         clientId = newClient.id;
 
-        // Create billing
+        // Create billing with proration
         const { error: billingError } = await supabase
           .from('client_billing')
           .insert({
@@ -326,8 +396,12 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
             monthly_fee: data.monthly_fee,
             installation_cost: data.installation_cost,
             installation_date: data.installation_date,
-            first_billing_date: data.first_billing_date,
-            balance: 0,
+            first_billing_date: proration.firstBillingDate.toISOString().split('T')[0],
+            billing_day: data.billing_day,
+            prorated_amount: proration.proratedAmount,
+            additional_charges: data.additional_charges,
+            additional_charges_notes: data.additional_charges_notes || null,
+            balance: initialBalance,
           });
 
         if (billingError) throw billingError;
@@ -349,6 +423,7 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
             antenna_mac: data.antenna_mac || null,
             antenna_ip: data.antenna_ip || null,
             antenna_ssid: data.antenna_ssid || null,
+            antenna_serial: data.antenna_serial || null,
             installer_name: data.installer_name || null,
             installation_date: data.installation_date,
           });
@@ -391,7 +466,7 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{client ? 'Editar Cliente' : 'Nuevo Cliente'}</DialogTitle>
         </DialogHeader>
@@ -577,243 +652,348 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
               </TabsContent>
 
               <TabsContent value="billing" className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="monthly_fee"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Mensualidad *</FormLabel>
-                        <FormControl>
-                          <Input
-                            {...field}
-                            type="number"
-                            onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="installation_cost"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Costo de Instalación</FormLabel>
-                        <FormControl>
-                          <Input
-                            {...field}
-                            type="number"
-                            onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="monthly_fee"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Mensualidad *</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                type="number"
+                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="billing_day"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Día de Corte *</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                type="number"
+                                min={1}
+                                max={28}
+                                onChange={(e) => field.onChange(parseInt(e.target.value) || 10)}
+                              />
+                            </FormControl>
+                            <FormDescription>Día del mes para cobro</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="installation_date"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Fecha de Instalación *</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="date" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="first_billing_date"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Primera Fecha de Cobro *</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="date" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="installation_date"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Fecha de Instalación *</FormLabel>
+                            <FormControl>
+                              <Input {...field} type="date" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="installation_cost"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Costo de Instalación</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                type="number"
+                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+
+                    <FormField
+                      control={form.control}
+                      name="additional_charges"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Cargos Adicionales</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type="number"
+                              onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="additional_charges_notes"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Notas de Cargos Adicionales</FormLabel>
+                          <FormControl>
+                            <Textarea {...field} rows={2} placeholder="Ej: Cable extra, soporte especial..." />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  {/* Proration Preview */}
+                  <Card className="bg-muted/50">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Calculator className="h-5 w-5" />
+                        Cálculo de Prorrateo
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {prorationPreview ? (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Días a cobrar:</span>
+                            <span className="font-medium">{prorationPreview.daysCharged} días</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Monto prorrateado:</span>
+                            <span className="font-medium">{formatCurrency(prorationPreview.proratedAmount)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Costo instalación:</span>
+                            <span className="font-medium">{formatCurrency(form.getValues('installation_cost'))}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Cargos adicionales:</span>
+                            <span className="font-medium">{formatCurrency(form.getValues('additional_charges'))}</span>
+                          </div>
+                          <div className="border-t pt-2 mt-2">
+                            <div className="flex justify-between text-lg">
+                              <span className="font-semibold">Saldo Inicial:</span>
+                              <span className="font-bold text-primary">{formatCurrency(prorationPreview.totalInitial)}</span>
+                            </div>
+                          </div>
+                          <div className="text-sm text-muted-foreground mt-2">
+                            Primera fecha de cobro:{' '}
+                            <span className="font-medium">
+                              {prorationPreview.firstBillingDate.toLocaleDateString('es-MX', {
+                                day: 'numeric',
+                                month: 'long',
+                                year: 'numeric',
+                              })}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-muted-foreground text-sm">
+                          Ingresa la mensualidad, fecha de instalación y día de corte para calcular el prorrateo.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
                 </div>
               </TabsContent>
 
               <TabsContent value="equipment" className="space-y-6">
-                <div className="space-y-4">
-                  <h4 className="font-semibold">Router</h4>
-                  <div className="grid grid-cols-4 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="router_brand"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Marca</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="router_model"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Modelo</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="router_mac"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>MAC</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="router_ip"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>IP</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <h4 className="font-semibold text-lg">Router</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="router_brand"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Marca</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="router_model"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Modelo</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="router_mac"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>MAC</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="AA:BB:CC:DD:EE:FF" />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="router_ip"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>IP</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="192.168.1.1" />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="router_serial"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Número de Serie</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="router_network_name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Nombre de Red WiFi</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="router_password"
+                        render={({ field }) => (
+                          <FormItem className="col-span-2">
+                            <FormLabel>Contraseña WiFi</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
                   </div>
-                  <div className="grid grid-cols-3 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="router_serial"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Serial</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="router_network_name"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Nombre de Red WiFi</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="router_password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Contraseña WiFi</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                </div>
 
-                <div className="space-y-4">
-                  <h4 className="font-semibold">Antena</h4>
-                  <div className="grid grid-cols-4 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="antenna_brand"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Marca</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="antenna_model"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Modelo</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="antenna_mac"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>MAC</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="antenna_ip"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>IP</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="antenna_ssid"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>SSID</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="installer_name"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Nombre del Instalador</FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
+                  <div className="space-y-4">
+                    <h4 className="font-semibold text-lg">Antena</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="antenna_brand"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Marca</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="antenna_model"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Modelo</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="antenna_mac"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>MAC</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="AA:BB:CC:DD:EE:FF" />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="antenna_ip"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>IP</FormLabel>
+                            <FormControl>
+                              <Input {...field} placeholder="192.168.1.2" />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="antenna_ssid"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>SSID</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="antenna_serial"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Número de Serie</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="installer_name"
+                        render={({ field }) => (
+                          <FormItem className="col-span-2">
+                            <FormLabel>Nombre del Instalador</FormLabel>
+                            <FormControl>
+                              <Input {...field} />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+                    </div>
                   </div>
                 </div>
               </TabsContent>

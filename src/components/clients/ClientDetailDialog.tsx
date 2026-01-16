@@ -14,7 +14,8 @@ import { Separator } from '@/components/ui/separator';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { User, MapPin, Phone, FileText, Wifi, CreditCard, Image, Download } from 'lucide-react';
+import { User, MapPin, Phone, FileText, Wifi, CreditCard, Image, Calculator, Calendar, DollarSign } from 'lucide-react';
+import { formatCurrency } from '@/lib/billing';
 import type { Client, ClientBilling, Equipment, Payment } from '@/types/database';
 
 type ClientWithDetails = Client & {
@@ -49,8 +50,8 @@ export function ClientDetailDialog({ client, open, onOpenChange }: ClientDetailD
 
   if (!client) return null;
 
-  const billing = client.client_billing;
-  const equipment = client.equipment?.[0];
+  const billing = client.client_billing as any;
+  const equipment = client.equipment?.[0] as any;
 
   const getDocumentUrl = async (path: string | null) => {
     if (!path) return null;
@@ -174,149 +175,204 @@ export function ClientDetailDialog({ client, open, onOpenChange }: ClientDetailD
           </TabsContent>
 
           <TabsContent value="billing" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <CreditCard className="h-5 w-5" />
-                  Información de Facturación
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Mensualidad</p>
-                  <p className="text-2xl font-bold text-primary">
-                    ${billing?.monthly_fee?.toLocaleString() || '0'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Saldo Actual</p>
-                  <p className={`text-2xl font-bold ${(billing?.balance || 0) > 0 ? 'text-destructive' : 'text-green-600'}`}>
-                    ${billing?.balance?.toLocaleString() || '0'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Costo de Instalación</p>
-                  <p className="font-medium">${billing?.installation_cost?.toLocaleString() || '0'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Fecha de Instalación</p>
-                  <p className="font-medium">
-                    {billing?.installation_date
-                      ? format(new Date(billing.installation_date), 'dd MMMM yyyy', { locale: es })
-                      : '-'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Primera Fecha de Cobro</p>
-                  <p className="font-medium">
-                    {billing?.first_billing_date
-                      ? format(new Date(billing.first_billing_date), 'dd MMMM yyyy', { locale: es })
-                      : '-'}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+            <div className="grid grid-cols-2 gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <CreditCard className="h-5 w-5" />
+                    Información de Facturación
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Mensualidad</p>
+                      <p className="text-2xl font-bold text-primary">
+                        {formatCurrency(billing?.monthly_fee || 0)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Día de Corte</p>
+                      <p className="text-2xl font-bold">
+                        {billing?.billing_day || 10}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <Separator />
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Fecha de Instalación</p>
+                      <p className="font-medium">
+                        {billing?.installation_date
+                          ? format(new Date(billing.installation_date), 'dd MMMM yyyy', { locale: es })
+                          : '-'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Primera Fecha de Cobro</p>
+                      <p className="font-medium">
+                        {billing?.first_billing_date
+                          ? format(new Date(billing.first_billing_date), 'dd MMMM yyyy', { locale: es })
+                          : '-'}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Calculator className="h-5 w-5" />
+                    Desglose de Cargos
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Prorrateo inicial:</span>
+                    <span className="font-medium">{formatCurrency(billing?.prorated_amount || 0)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Costo de instalación:</span>
+                    <span className="font-medium">{formatCurrency(billing?.installation_cost || 0)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cargos adicionales:</span>
+                    <span className="font-medium">{formatCurrency(billing?.additional_charges || 0)}</span>
+                  </div>
+                  {billing?.additional_charges_notes && (
+                    <p className="text-xs text-muted-foreground italic">
+                      {billing.additional_charges_notes}
+                    </p>
+                  )}
+                  
+                  <Separator />
+                  
+                  <div className="flex justify-between text-lg">
+                    <span className="font-semibold">Saldo Actual:</span>
+                    <span className={`font-bold ${(billing?.balance || 0) > 0 ? 'text-destructive' : 'text-green-600'}`}>
+                      {formatCurrency(billing?.balance || 0)}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="equipment" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Wifi className="h-5 w-5" />
-                  Equipo Instalado
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {equipment ? (
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <h4 className="font-semibold">Router</h4>
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div>
-                          <p className="text-muted-foreground">Marca</p>
-                          <p>{equipment.router_brand || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">Modelo</p>
-                          <p>{equipment.router_model || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">MAC</p>
-                          <p className="font-mono text-xs">{equipment.router_mac || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">IP</p>
-                          <p className="font-mono text-xs">{equipment.router_ip || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">Red WiFi</p>
-                          <p>{equipment.router_network_name || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">Contraseña WiFi</p>
-                          <p className="font-mono text-xs">{equipment.router_password || '-'}</p>
-                        </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Wifi className="h-5 w-5" />
+                    Router
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {equipment ? (
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-muted-foreground">Marca</p>
+                        <p className="font-medium">{equipment.router_brand || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Modelo</p>
+                        <p className="font-medium">{equipment.router_model || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">MAC</p>
+                        <p className="font-mono text-xs">{equipment.router_mac || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">IP</p>
+                        <p className="font-mono text-xs">{equipment.router_ip || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Número de Serie</p>
+                        <p className="font-mono text-xs">{equipment.router_serial || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Red WiFi</p>
+                        <p className="font-medium">{equipment.router_network_name || '-'}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="text-muted-foreground">Contraseña WiFi</p>
+                        <p className="font-mono bg-muted px-2 py-1 rounded">{equipment.router_password || '-'}</p>
                       </div>
                     </div>
+                  ) : (
+                    <p className="text-muted-foreground text-center py-4">Sin información</p>
+                  )}
+                </CardContent>
+              </Card>
 
-                    <div className="space-y-4">
-                      <h4 className="font-semibold">Antena</h4>
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div>
-                          <p className="text-muted-foreground">Marca</p>
-                          <p>{equipment.antenna_brand || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">Modelo</p>
-                          <p>{equipment.antenna_model || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">MAC</p>
-                          <p className="font-mono text-xs">{equipment.antenna_mac || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">IP</p>
-                          <p className="font-mono text-xs">{equipment.antenna_ip || '-'}</p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">SSID</p>
-                          <p>{equipment.antenna_ssid || '-'}</p>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Wifi className="h-5 w-5" />
+                    Antena
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {equipment ? (
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-muted-foreground">Marca</p>
+                        <p className="font-medium">{equipment.antenna_brand || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Modelo</p>
+                        <p className="font-medium">{equipment.antenna_model || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">MAC</p>
+                        <p className="font-mono text-xs">{equipment.antenna_mac || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">IP</p>
+                        <p className="font-mono text-xs">{equipment.antenna_ip || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">SSID</p>
+                        <p className="font-medium">{equipment.antenna_ssid || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Número de Serie</p>
+                        <p className="font-mono text-xs">{equipment.antenna_serial || '-'}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <Separator className="my-2" />
+                        <div className="flex justify-between">
+                          <div>
+                            <p className="text-muted-foreground">Fecha de Instalación</p>
+                            <p className="font-medium">
+                              {equipment.installation_date
+                                ? format(new Date(equipment.installation_date), 'dd MMM yyyy', { locale: es })
+                                : '-'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">Instalador</p>
+                            <p className="font-medium">{equipment.installer_name || '-'}</p>
+                          </div>
                         </div>
                       </div>
                     </div>
-
-                    <div className="col-span-2">
-                      <Separator className="my-4" />
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <p className="text-muted-foreground">Fecha de Instalación</p>
-                          <p>
-                            {equipment.installation_date
-                              ? format(new Date(equipment.installation_date), 'dd MMMM yyyy', { locale: es })
-                              : '-'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-muted-foreground">Instalador</p>
-                          <p>{equipment.installer_name || '-'}</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground text-center py-8">
-                    No hay información de equipo registrada
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+                  ) : (
+                    <p className="text-muted-foreground text-center py-4">Sin información</p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="payments" className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-lg">
-                  <CreditCard className="h-5 w-5" />
+                  <DollarSign className="h-5 w-5" />
                   Historial de Pagos
                 </CardTitle>
               </CardHeader>
@@ -329,13 +385,13 @@ export function ClientDetailDialog({ client, open, onOpenChange }: ClientDetailD
                         className="flex items-center justify-between p-3 border rounded-lg"
                       >
                         <div>
-                          <p className="font-medium">
-                            ${payment.amount.toLocaleString()}
+                          <p className="font-medium text-green-600">
+                            {formatCurrency(payment.amount)}
                           </p>
                           <p className="text-sm text-muted-foreground">
                             {format(new Date(payment.payment_date), 'dd MMM yyyy', { locale: es })}
                             {payment.period_month && payment.period_year && (
-                              <span> • {payment.period_month}/{payment.period_year}</span>
+                              <span> • Periodo: {payment.period_month}/{payment.period_year}</span>
                             )}
                           </p>
                         </div>
