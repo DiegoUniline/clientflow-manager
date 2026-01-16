@@ -108,6 +108,11 @@ export interface ClientBilling {
   installation_date: string;
   first_billing_date: string;
   balance: number;
+  billing_day: number;
+  plan_id: string | null;
+  prorated_amount: number | null;
+  additional_charges: number | null;
+  additional_charges_notes: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -124,6 +129,44 @@ export interface Payment {
   payer_phone: string | null;
   receipt_number: string | null;
   bank_type: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ServicePlan {
+  id: string;
+  name: string;
+  monthly_fee: number;
+  speed_download: string | null;
+  speed_upload: string | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EquipmentHistory {
+  id: string;
+  client_id: string;
+  equipment_id: string | null;
+  change_type: 'installation' | 'antenna_change' | 'router_change' | 'relocation';
+  old_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  charge_id: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface PlanChangeHistory {
+  id: string;
+  client_id: string;
+  old_plan_id: string | null;
+  new_plan_id: string | null;
+  old_monthly_fee: number | null;
+  new_monthly_fee: number | null;
+  effective_date: string;
   notes: string | null;
   created_by: string | null;
   created_at: string;
