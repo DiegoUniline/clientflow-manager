@@ -9,7 +9,8 @@ import {
   History,
   Wifi,
   Tag,
-  CalendarClock
+  CalendarClock,
+  Receipt
 } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
@@ -33,6 +34,7 @@ const mainNavItems = [
   { title: 'Prospectos', icon: UserPlus, href: '/prospects' },
   { title: 'Historial Prospectos', icon: History, href: '/prospects/history' },
   { title: 'Clientes', icon: Users, href: '/clients' },
+  { title: 'Mensualidades', icon: Receipt, href: '/mensualidades' },
   { title: 'Pagos', icon: CreditCard, href: '/payments' },
   { title: 'Agenda Servicios', icon: CalendarClock, href: '/services' },
 ];
