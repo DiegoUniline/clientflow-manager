@@ -108,7 +108,7 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
 
     try {
       // Create payment
-      const { error: paymentError } = await supabase.from('payments').insert({
+      const { data: paymentData, error: paymentError } = await supabase.from('payments').insert({
         client_id: client.id,
         amount: data.amount,
         payment_type: data.payment_type,
@@ -121,11 +121,43 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
         payer_phone: data.payer_phone || null,
         notes: data.notes || null,
         created_by: user?.id,
-      });
+      }).select().single();
 
       if (paymentError) throw paymentError;
 
-      // Update client balance
+      // Get pending charges ordered by creation date
+      const { data: pendingCharges } = await supabase
+        .from('client_charges')
+        .select('*')
+        .eq('client_id', client.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true });
+
+      // Apply payment to pending charges (oldest first)
+      let remainingPayment = data.amount;
+      
+      if (pendingCharges && pendingCharges.length > 0) {
+        for (const charge of pendingCharges) {
+          if (remainingPayment <= 0) break;
+          
+          if (remainingPayment >= charge.amount) {
+            // Full payment of this charge
+            await supabase
+              .from('client_charges')
+              .update({ 
+                status: 'paid', 
+                paid_date: data.payment_date,
+                payment_id: paymentData.id 
+              })
+              .eq('id', charge.id);
+            
+            remainingPayment -= charge.amount;
+          }
+          // If partial payment, leave charge as pending (will be covered by balance update)
+        }
+      }
+
+      // Update client balance (can go negative = saldo a favor)
       if (client.client_billing) {
         const newBalance = (client.client_billing.balance || 0) - data.amount;
         const { error: balanceError } = await supabase
@@ -136,7 +168,13 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
         if (balanceError) throw balanceError;
       }
 
-      toast.success('Pago registrado correctamente');
+      const newBalance = (client.client_billing?.balance || 0) - data.amount;
+      if (newBalance < 0) {
+        toast.success(`Pago registrado. Saldo a favor: $${Math.abs(newBalance).toLocaleString()}`);
+      } else {
+        toast.success('Pago registrado correctamente');
+      }
+      
       form.reset();
       onSuccess();
     } catch (error: any) {

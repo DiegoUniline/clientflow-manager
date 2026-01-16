@@ -406,6 +406,49 @@ export function ClientFormDialog({ client, open, onOpenChange, onSuccess }: Clie
 
         if (billingError) throw billingError;
 
+        // Create initial charges in client_charges table
+        const initialCharges = [];
+        
+        if (proration.proratedAmount > 0) {
+          initialCharges.push({
+            client_id: clientId,
+            description: `Prorrateo inicial (${proration.daysCharged} días)`,
+            amount: proration.proratedAmount,
+            status: 'pending',
+            created_by: user?.id,
+          });
+        }
+        
+        if (data.installation_cost > 0) {
+          initialCharges.push({
+            client_id: clientId,
+            description: 'Costo de instalación',
+            amount: data.installation_cost,
+            status: 'pending',
+            created_by: user?.id,
+          });
+        }
+        
+        if (data.additional_charges > 0) {
+          initialCharges.push({
+            client_id: clientId,
+            description: data.additional_charges_notes || 'Cargos adicionales iniciales',
+            amount: data.additional_charges,
+            status: 'pending',
+            created_by: user?.id,
+          });
+        }
+
+        if (initialCharges.length > 0) {
+          const { error: chargesError } = await supabase
+            .from('client_charges')
+            .insert(initialCharges);
+
+          if (chargesError) {
+            console.error('Error creating initial charges:', chargesError);
+          }
+        }
+
         // Create equipment
         const { error: equipmentError } = await supabase
           .from('equipment')
