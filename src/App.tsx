@@ -10,6 +10,10 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import Prospects from "./pages/Prospects";
 import ProspectsHistory from "./pages/ProspectsHistory";
+import Clients from "./pages/Clients";
+import ClientsHistory from "./pages/ClientsHistory";
+import ClientDebt from "./pages/ClientDebt";
+import Payments from "./pages/Payments";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -28,6 +32,10 @@ const App = () => (
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/prospects" element={<ProtectedRoute><Prospects /></ProtectedRoute>} />
             <Route path="/prospects/history" element={<ProtectedRoute><ProspectsHistory /></ProtectedRoute>} />
+            <Route path="/clients" element={<ProtectedRoute><Clients /></ProtectedRoute>} />
+            <Route path="/clients/history" element={<ProtectedRoute><ClientsHistory /></ProtectedRoute>} />
+            <Route path="/clients/debt" element={<ProtectedRoute><ClientDebt /></ProtectedRoute>} />
+            <Route path="/payments" element={<ProtectedRoute><Payments /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
