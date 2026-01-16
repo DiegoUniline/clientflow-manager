@@ -83,6 +83,23 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
   const [chargeAmount, setChargeAmount] = useState('');
   const [chargeDescription, setChargeDescription] = useState('');
 
+  // Fetch billing (to get updated balance)
+  const { data: billingData, refetch: refetchBilling } = useQuery({
+    queryKey: ['client_billing', client?.id],
+    queryFn: async () => {
+      if (!client?.id) return null;
+      const { data, error } = await supabase
+        .from('client_billing')
+        .select('*')
+        .eq('client_id', client.id)
+        .maybeSingle();
+
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!client?.id && open,
+  });
+
   // Fetch payments
   const { data: payments = [] } = useQuery({
     queryKey: ['payments', client?.id],
@@ -152,7 +169,8 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
 
   if (!client) return null;
 
-  const billing = client.client_billing as any;
+  // Use fetched billing data or fallback to client prop
+  const billing = billingData || client.client_billing as any;
   const equipment = client.equipment?.[0] as any;
   const billingDay = billing?.billing_day || 10;
   const nextBillingDate = getNextBillingDate(billingDay);
@@ -249,6 +267,7 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
       setChargeAmount('');
       setChargeDescription('');
       refetchCharges();
+      refetchBilling();
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     } catch (error: any) {
       toast.error(error.message || 'Error al agregar cargo');
