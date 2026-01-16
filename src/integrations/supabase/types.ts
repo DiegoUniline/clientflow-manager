@@ -54,6 +54,7 @@ export type Database = {
           installation_cost: number
           installation_date: string
           monthly_fee: number
+          plan_id: string | null
           prorated_amount: number | null
           updated_at: string
         }
@@ -69,6 +70,7 @@ export type Database = {
           installation_cost?: number
           installation_date: string
           monthly_fee: number
+          plan_id?: string | null
           prorated_amount?: number | null
           updated_at?: string
         }
@@ -84,6 +86,7 @@ export type Database = {
           installation_cost?: number
           installation_date?: string
           monthly_fee?: number
+          plan_id?: string | null
           prorated_amount?: number | null
           updated_at?: string
         }
@@ -93,6 +96,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: true
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_billing_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "service_plans"
             referencedColumns: ["id"]
           },
         ]
@@ -368,6 +378,67 @@ export type Database = {
           },
         ]
       }
+      equipment_history: {
+        Row: {
+          change_type: string
+          charge_id: string | null
+          client_id: string
+          created_at: string | null
+          created_by: string | null
+          equipment_id: string | null
+          id: string
+          new_values: Json | null
+          notes: string | null
+          old_values: Json | null
+        }
+        Insert: {
+          change_type: string
+          charge_id?: string | null
+          client_id: string
+          created_at?: string | null
+          created_by?: string | null
+          equipment_id?: string | null
+          id?: string
+          new_values?: Json | null
+          notes?: string | null
+          old_values?: Json | null
+        }
+        Update: {
+          change_type?: string
+          charge_id?: string | null
+          client_id?: string
+          created_at?: string | null
+          created_by?: string | null
+          equipment_id?: string | null
+          id?: string
+          new_values?: Json | null
+          notes?: string | null
+          old_values?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "equipment_history_charge_id_fkey"
+            columns: ["charge_id"]
+            isOneToOne: false
+            referencedRelation: "client_charges"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "equipment_history_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "equipment_history_equipment_id_fkey"
+            columns: ["equipment_id"]
+            isOneToOne: false
+            referencedRelation: "equipment"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payments: {
         Row: {
           amount: number
@@ -423,6 +494,67 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      plan_change_history: {
+        Row: {
+          client_id: string
+          created_at: string | null
+          created_by: string | null
+          effective_date: string
+          id: string
+          new_monthly_fee: number | null
+          new_plan_id: string | null
+          notes: string | null
+          old_monthly_fee: number | null
+          old_plan_id: string | null
+        }
+        Insert: {
+          client_id: string
+          created_at?: string | null
+          created_by?: string | null
+          effective_date: string
+          id?: string
+          new_monthly_fee?: number | null
+          new_plan_id?: string | null
+          notes?: string | null
+          old_monthly_fee?: number | null
+          old_plan_id?: string | null
+        }
+        Update: {
+          client_id?: string
+          created_at?: string | null
+          created_by?: string | null
+          effective_date?: string
+          id?: string
+          new_monthly_fee?: number | null
+          new_plan_id?: string | null
+          notes?: string | null
+          old_monthly_fee?: number | null
+          old_plan_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plan_change_history_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "plan_change_history_new_plan_id_fkey"
+            columns: ["new_plan_id"]
+            isOneToOne: false
+            referencedRelation: "service_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "plan_change_history_old_plan_id_fkey"
+            columns: ["old_plan_id"]
+            isOneToOne: false
+            referencedRelation: "service_plans"
             referencedColumns: ["id"]
           },
         ]
@@ -538,6 +670,42 @@ export type Database = {
           street?: string
           updated_at?: string
           work_type?: string | null
+        }
+        Relationships: []
+      }
+      service_plans: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          monthly_fee: number
+          name: string
+          speed_download: string | null
+          speed_upload: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          monthly_fee: number
+          name: string
+          speed_download?: string | null
+          speed_upload?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          monthly_fee?: number
+          name?: string
+          speed_download?: string | null
+          speed_upload?: string | null
+          updated_at?: string | null
         }
         Relationships: []
       }

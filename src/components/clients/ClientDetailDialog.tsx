@@ -29,15 +29,26 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { format, addMonths, isBefore, startOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { 
   User, MapPin, Phone, FileText, Wifi, DollarSign, 
   Calendar, Image, Plus, StickyNote, CreditCard, 
-  Receipt, CheckCircle2, Clock, AlertCircle, Edit, Loader2
+  Receipt, CheckCircle2, Clock, AlertCircle, Edit, Loader2,
+  History, ChevronDown, Settings, Router
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/billing';
-import type { Client, ClientBilling, Equipment, Payment } from '@/types/database';
+import { ChangePlanDialog } from './ChangePlanDialog';
+import { ChangeBillingDayDialog } from './ChangeBillingDayDialog';
+import { ChangeEquipmentDialog } from './ChangeEquipmentDialog';
+import { RelocationDialog } from './RelocationDialog';
+import type { Client, ClientBilling, Equipment, Payment, EquipmentHistory, PlanChangeHistory } from '@/types/database';
 
 type ClientWithDetails = Client & {
   client_billing: ClientBilling | null;
@@ -78,6 +89,12 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
   const [selectedTab, setSelectedTab] = useState('servicios');
   const [newNote, setNewNote] = useState('');
   const [isAddingNote, setIsAddingNote] = useState(false);
+  
+  // Dialog states for service changes
+  const [changePlanOpen, setChangePlanOpen] = useState(false);
+  const [changeBillingDayOpen, setChangeBillingDayOpen] = useState(false);
+  const [changeEquipmentOpen, setChangeEquipmentOpen] = useState(false);
+  const [relocationOpen, setRelocationOpen] = useState(false);
   const [isAddingCharge, setIsAddingCharge] = useState(false);
   const [selectedChargeType, setSelectedChargeType] = useState('');
   const [chargeAmount, setChargeAmount] = useState('');
@@ -329,6 +346,33 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
                   <DollarSign className="h-4 w-4 mr-2" />
                   Registrar Pago
                 </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline">
+                      <Settings className="h-4 w-4 mr-2" />
+                      Gestionar Servicio
+                      <ChevronDown className="h-4 w-4 ml-2" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem onClick={() => setChangePlanOpen(true)}>
+                      <Wifi className="h-4 w-4 mr-2" />
+                      Cambiar Plan
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setChangeBillingDayOpen(true)}>
+                      <Calendar className="h-4 w-4 mr-2" />
+                      Cambiar Día de Corte
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setChangeEquipmentOpen(true)}>
+                      <Router className="h-4 w-4 mr-2" />
+                      Cambiar Equipo
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setRelocationOpen(true)}>
+                      <MapPin className="h-4 w-4 mr-2" />
+                      Cambio de Domicilio
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button variant="outline" onClick={onEdit}>
                   <Edit className="h-4 w-4 mr-2" />
                   Editar
@@ -896,6 +940,52 @@ export function ClientDetailDialog({ client, open, onOpenChange, onRegisterPayme
             </TabsContent>
           </Tabs>
         </div>
+
+        {/* Service Change Dialogs */}
+        <ChangePlanDialog
+          clientId={client.id}
+          clientName={`${client.first_name} ${client.last_name_paterno}`}
+          currentBilling={billing}
+          open={changePlanOpen}
+          onOpenChange={setChangePlanOpen}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['clients'] });
+            refetchBilling();
+          }}
+        />
+
+        <ChangeBillingDayDialog
+          clientId={client.id}
+          clientName={`${client.first_name} ${client.last_name_paterno}`}
+          currentBilling={billing}
+          open={changeBillingDayOpen}
+          onOpenChange={setChangeBillingDayOpen}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['clients'] });
+            refetchBilling();
+          }}
+        />
+
+        <ChangeEquipmentDialog
+          clientId={client.id}
+          clientName={`${client.first_name} ${client.last_name_paterno}`}
+          equipment={equipment}
+          open={changeEquipmentOpen}
+          onOpenChange={setChangeEquipmentOpen}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['clients'] });
+          }}
+        />
+
+        <RelocationDialog
+          client={client}
+          equipment={equipment}
+          open={relocationOpen}
+          onOpenChange={setRelocationOpen}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['clients'] });
+          }}
+        />
       </DialogContent>
     </Dialog>
   );
