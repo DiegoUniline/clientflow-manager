@@ -30,8 +30,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Wallet, Info } from 'lucide-react';
 import { ComboboxWithCreate, CatalogItem } from '@/components/shared/ComboboxWithCreate';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import type { Client, ClientBilling } from '@/types/database';
 
 type ClientWithBilling = Client & {
@@ -39,8 +41,8 @@ type ClientWithBilling = Client & {
 };
 
 const paymentSchema = z.object({
-  amount: z.number().min(1, 'El monto debe ser mayor a 0'),
-  payment_type: z.string().min(1, 'El tipo de pago es requerido'),
+  amount: z.number().min(0, 'El monto debe ser mayor o igual a 0'),
+  payment_type: z.string().optional(),
   bank_type: z.string().optional(),
   payment_date: z.string().min(1, 'La fecha es requerida'),
   period_month: z.number().min(1).max(12).optional(),
@@ -49,6 +51,8 @@ const paymentSchema = z.object({
   payer_name: z.string().optional(),
   payer_phone: z.string().optional(),
   notes: z.string().optional(),
+  use_credit_balance: z.boolean().optional(),
+  credit_amount_to_use: z.number().optional(),
 });
 
 type PaymentFormData = z.infer<typeof paymentSchema>;
@@ -79,6 +83,14 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [useCreditBalance, setUseCreditBalance] = useState(false);
+  const [creditAmountToUse, setCreditAmountToUse] = useState(0);
+  
+  // Calculate available credit balance (negative balance means credit)
+  const availableCreditBalance = client?.client_billing?.balance 
+    ? Math.abs(Math.min(client.client_billing.balance, 0)) 
+    : 0;
+  const hasCreditBalance = availableCreditBalance > 0;
 
   const currentDate = new Date();
   const currentMonth = currentDate.getMonth() + 1;
@@ -145,26 +157,65 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
   const onSubmit = async (data: PaymentFormData) => {
     if (!client) return;
 
+    // Calculate total payment (cash + credit balance)
+    const cashAmount = data.amount;
+    const creditUsed = useCreditBalance ? creditAmountToUse : 0;
+    const totalPaymentValue = cashAmount + creditUsed;
+
+    // Validate: at least some payment must be made
+    if (totalPaymentValue <= 0) {
+      toast.error('Debe registrar un monto de pago o usar saldo a favor');
+      return;
+    }
+
+    // Validate payment type is required if cash amount > 0
+    if (cashAmount > 0 && !data.payment_type) {
+      toast.error('El tipo de pago es requerido cuando hay un monto en efectivo');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      // Create payment
-      const { data: paymentData, error: paymentError } = await supabase.from('payments').insert({
-        client_id: client.id,
-        amount: data.amount,
-        payment_type: data.payment_type,
-        bank_type: data.bank_type || null,
-        payment_date: data.payment_date,
-        period_month: data.period_month || null,
-        period_year: data.period_year || null,
-        receipt_number: data.receipt_number || null,
-        payer_name: data.payer_name || null,
-        payer_phone: data.payer_phone || null,
-        notes: data.notes || null,
-        created_by: user?.id,
-      }).select().single();
+      // Only create payment record if there's cash payment
+      let paymentId: string | null = null;
+      
+      if (cashAmount > 0) {
+        const { data: paymentData, error: paymentError } = await supabase.from('payments').insert({
+          client_id: client.id,
+          amount: cashAmount,
+          payment_type: data.payment_type || 'Saldo a favor',
+          bank_type: data.bank_type || null,
+          payment_date: data.payment_date,
+          period_month: data.period_month || null,
+          period_year: data.period_year || null,
+          receipt_number: data.receipt_number || null,
+          payer_name: data.payer_name || null,
+          payer_phone: data.payer_phone || null,
+          notes: creditUsed > 0 
+            ? `${data.notes || ''} [Incluye $${creditUsed.toLocaleString()} de saldo a favor]`.trim()
+            : data.notes || null,
+          created_by: user?.id,
+        }).select().single();
 
-      if (paymentError) throw paymentError;
+        if (paymentError) throw paymentError;
+        paymentId = paymentData.id;
+      } else if (creditUsed > 0) {
+        // Create a special payment record for credit balance usage
+        const { data: paymentData, error: paymentError } = await supabase.from('payments').insert({
+          client_id: client.id,
+          amount: 0,
+          payment_type: 'Saldo a favor',
+          payment_date: data.payment_date,
+          period_month: data.period_month || null,
+          period_year: data.period_year || null,
+          notes: `Aplicación de saldo a favor: $${creditUsed.toLocaleString()}`,
+          created_by: user?.id,
+        }).select().single();
+
+        if (paymentError) throw paymentError;
+        paymentId = paymentData.id;
+      }
 
       // Get pending charges ordered by creation date
       const { data: pendingCharges } = await supabase
@@ -174,8 +225,8 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
         .eq('status', 'pending')
         .order('created_at', { ascending: true });
 
-      // Apply payment to pending charges (oldest first)
-      let remainingPayment = data.amount;
+      // Apply total payment to pending charges (oldest first)
+      let remainingPayment = totalPaymentValue;
       
       if (pendingCharges && pendingCharges.length > 0) {
         for (const charge of pendingCharges) {
@@ -188,7 +239,7 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
               .update({ 
                 status: 'paid', 
                 paid_date: data.payment_date,
-                payment_id: paymentData.id 
+                payment_id: paymentId 
               })
               .eq('id', charge.id);
             
@@ -198,25 +249,42 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
         }
       }
 
-      // Update client balance (can go negative = saldo a favor)
+      // Update client balance
+      // Balance change = -(cash payment) + (credit used - credit used) = -cash payment
+      // But we also consume the credit, so: new balance = old balance - cash - credit used + credit used = old balance - cash
+      // Wait, that's wrong. If we use credit, we're reducing the credit balance.
+      // old balance is negative (credit). If we use credit, balance goes towards 0.
+      // new balance = old balance - cash + credit used (because credit was negative, using it adds to balance)
       if (client.client_billing) {
-        const newBalance = (client.client_billing.balance || 0) - data.amount;
+        // old_balance - cash_paid + credit_used_from_negative_balance
+        // Example: balance = -200 (credit), cash = 250, credit_used = 200
+        // new_balance = -200 - 250 + 200 = -250? No that's wrong
+        // Actually: we have -200 credit, we use 200 of it (becomes 0), then pay 250 cash (becomes -250 again)
+        // So: new_balance = old_balance + credit_used - cash_paid
+        // = -200 + 200 - 250 = -250 ✓
+        const newBalance = (client.client_billing.balance || 0) + creditUsed - cashAmount;
         const { error: balanceError } = await supabase
           .from('client_billing')
           .update({ balance: newBalance })
           .eq('id', client.client_billing.id);
 
         if (balanceError) throw balanceError;
-      }
 
-      const newBalance = (client.client_billing?.balance || 0) - data.amount;
-      if (newBalance < 0) {
-        toast.success(`Pago registrado. Saldo a favor: $${Math.abs(newBalance).toLocaleString()}`);
+        // Show appropriate message
+        if (creditUsed > 0) {
+          toast.success(`Pago registrado. Se aplicaron $${creditUsed.toLocaleString()} de saldo a favor.`);
+        } else if (newBalance < 0) {
+          toast.success(`Pago registrado. Saldo a favor: $${Math.abs(newBalance).toLocaleString()}`);
+        } else {
+          toast.success('Pago registrado correctamente');
+        }
       } else {
         toast.success('Pago registrado correctamente');
       }
       
       form.reset();
+      setUseCreditBalance(false);
+      setCreditAmountToUse(0);
       onSuccess();
     } catch (error: any) {
       console.error('Error:', error);
@@ -230,28 +298,94 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Registrar Pago</DialogTitle>
           <p className="text-sm text-muted-foreground">
             Cliente: {client.first_name} {client.last_name_paterno}
             <br />
             Saldo actual:{' '}
-            <span className={client.client_billing?.balance || 0 > 0 ? 'text-destructive' : 'text-green-600'}>
+            <span className={(client.client_billing?.balance || 0) > 0 ? 'text-destructive' : 'text-green-600'}>
               ${client.client_billing?.balance?.toLocaleString() || '0'}
             </span>
+            {hasCreditBalance && (
+              <span className="ml-2 text-green-600 font-medium">
+                (Saldo a favor: ${availableCreditBalance.toLocaleString()})
+              </span>
+            )}
           </p>
         </DialogHeader>
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            {/* Credit Balance Section */}
+            {hasCreditBalance && (
+              <Alert className="bg-green-50 border-green-200">
+                <Wallet className="h-4 w-4 text-green-600" />
+                <AlertDescription className="text-green-800">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        id="use_credit"
+                        checked={useCreditBalance}
+                        onCheckedChange={(checked) => {
+                          setUseCreditBalance(!!checked);
+                          if (checked) {
+                            // Default to use all available credit
+                            setCreditAmountToUse(availableCreditBalance);
+                          } else {
+                            setCreditAmountToUse(0);
+                          }
+                        }}
+                      />
+                      <label htmlFor="use_credit" className="text-sm font-medium cursor-pointer">
+                        Usar saldo a favor
+                      </label>
+                    </div>
+                    <span className="text-sm font-semibold">
+                      Disponible: ${availableCreditBalance.toLocaleString()}
+                    </span>
+                  </div>
+                  
+                  {useCreditBalance && (
+                    <div className="mt-3 flex items-center gap-2">
+                      <label className="text-sm">Monto a aplicar:</label>
+                      <Input
+                        type="number"
+                        value={creditAmountToUse}
+                        onChange={(e) => {
+                          const value = Math.min(
+                            parseFloat(e.target.value) || 0,
+                            availableCreditBalance
+                          );
+                          setCreditAmountToUse(Math.max(0, value));
+                        }}
+                        className="w-32 h-8 bg-white"
+                        max={availableCreditBalance}
+                        min={0}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCreditAmountToUse(availableCreditBalance)}
+                        className="h-8"
+                      >
+                        Usar todo
+                      </Button>
+                    </div>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
                 name="amount"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Monto *</FormLabel>
+                    <FormLabel>Monto en efectivo/transferencia {!useCreditBalance && '*'}</FormLabel>
                     <FormControl>
                       <Input
                         {...field}
@@ -259,6 +393,11 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
                         onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                       />
                     </FormControl>
+                    {useCreditBalance && creditAmountToUse > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Total a aplicar: ${(field.value + creditAmountToUse).toLocaleString()}
+                      </p>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
