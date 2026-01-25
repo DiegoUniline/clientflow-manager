@@ -297,6 +297,23 @@ export default function ClientDetail() {
     },
   });
 
+  // Fetch payment methods for displaying names
+  const { data: paymentMethods = [] } = useQuery({
+    queryKey: ['payment_methods_all'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('payment_methods')
+        .select('id, name');
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const getPaymentMethodName = (paymentTypeId: string) => {
+    const method = paymentMethods.find(pm => pm.id === paymentTypeId);
+    return method?.name || paymentTypeId;
+  };
+
   // Initialize edited data when client changes
   useEffect(() => {
     if (client) {
@@ -309,7 +326,7 @@ export default function ClientDetail() {
         phone1_country: c.phone1_country || 'MX',
         phone2: c.phone2 || '',
         phone2_country: c.phone2_country || 'MX',
-        phone3_signer: c.phone3_signer || '',
+        phone3: c.phone3 || '',
         phone3_country: c.phone3_country || 'MX',
         street: c.street,
         exterior_number: c.exterior_number,
@@ -425,7 +442,7 @@ export default function ClientDetail() {
         phone1_country: c.phone1_country || 'MX',
         phone2: c.phone2 || '',
         phone2_country: c.phone2_country || 'MX',
-        phone3_signer: c.phone3_signer || '',
+        phone3: c.phone3 || '',
         phone3_country: c.phone3_country || 'MX',
         street: c.street,
         exterior_number: c.exterior_number,
@@ -469,7 +486,7 @@ export default function ClientDetail() {
       const clientFields = [
         'first_name', 'last_name_paterno', 'last_name_materno', 
         'phone1', 'phone1_country', 'phone2', 'phone2_country',
-        'phone3_signer', 'phone3_country',
+        'phone3', 'phone3_country',
         'street', 'exterior_number', 'interior_number', 
         'neighborhood', 'city', 'postal_code'
       ] as const;
@@ -493,7 +510,7 @@ export default function ClientDetail() {
           phone1_country: editedClient.phone1_country,
           phone2: editedClient.phone2 || null,
           phone2_country: editedClient.phone2_country,
-          phone3_signer: editedClient.phone3_signer || null,
+          phone3: editedClient.phone3 || null,
           phone3_country: editedClient.phone3_country,
           street: editedClient.street,
           exterior_number: editedClient.exterior_number,
@@ -738,10 +755,10 @@ export default function ClientDetail() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label>Teléfono Firmante</Label>
+                        <Label>Teléfono 3</Label>
                         <PhoneInput
-                          value={editedClient.phone3_signer || ''}
-                          onChange={(v) => setEditedClient({ ...editedClient, phone3_signer: v })}
+                          value={editedClient.phone3 || ''}
+                          onChange={(v) => setEditedClient({ ...editedClient, phone3: v })}
                           country={(editedClient.phone3_country as PhoneCountry) || 'MX'}
                           onCountryChange={(c) => setEditedClient({ ...editedClient, phone3_country: c })}
                         />
@@ -1306,6 +1323,42 @@ export default function ClientDetail() {
 
           {/* TAB ESTADO CUENTA */}
           <TabsContent value="estado-cuenta" className="mt-4 space-y-4">
+            {/* Initial costs summary */}
+            {billing && (billing.installation_cost > 0 || billing.prorated_amount > 0 || (billing.additional_charges || 0) > 0) && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <DollarSign className="h-5 w-5" />
+                    Costos Iniciales
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-4 gap-4">
+                    <div className="bg-muted/50 p-4 rounded-lg text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Instalación</p>
+                      <p className="text-xl font-bold">{formatCurrency(billing.installation_cost || 0)}</p>
+                    </div>
+                    <div className="bg-muted/50 p-4 rounded-lg text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Prorrateo</p>
+                      <p className="text-xl font-bold">{formatCurrency(billing.prorated_amount || 0)}</p>
+                    </div>
+                    <div className="bg-muted/50 p-4 rounded-lg text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Cargos Adicionales</p>
+                      <p className="text-xl font-bold">{formatCurrency(billing.additional_charges || 0)}</p>
+                      {billing.additional_charges_notes && (
+                        <p className="text-xs text-muted-foreground mt-1">{billing.additional_charges_notes}</p>
+                      )}
+                    </div>
+                    <div className="bg-primary/10 p-4 rounded-lg text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Total Inicial</p>
+                      <p className="text-xl font-bold text-primary">
+                        {formatCurrency((billing.installation_cost || 0) + (billing.prorated_amount || 0) + (billing.additional_charges || 0))}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
             {/* Pending charges */}
             {pendingCharges.length > 0 && (
               <Card className="border-amber-200 bg-amber-50/50">
@@ -1380,7 +1433,7 @@ export default function ClientDetail() {
                             {formatCurrency(payment.amount)}
                           </TableCell>
                           <TableCell>
-                            <Badge variant="outline">{payment.payment_type}</Badge>
+                            <Badge variant="outline">{getPaymentMethodName(payment.payment_type)}</Badge>
                           </TableCell>
                           <TableCell>
                             {payment.period_month && payment.period_year 

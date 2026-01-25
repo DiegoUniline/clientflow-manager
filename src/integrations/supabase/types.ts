@@ -737,6 +737,7 @@ export type Database = {
         Row: {
           antenna_ip: string | null
           assigned_date: string | null
+          assigned_to: string | null
           cancellation_reason: string | null
           cancelled_at: string | null
           city: string
@@ -768,6 +769,7 @@ export type Database = {
         Insert: {
           antenna_ip?: string | null
           assigned_date?: string | null
+          assigned_to?: string | null
           cancellation_reason?: string | null
           cancelled_at?: string | null
           city: string
@@ -799,6 +801,7 @@ export type Database = {
         Update: {
           antenna_ip?: string | null
           assigned_date?: string | null
+          assigned_to?: string | null
           cancellation_reason?: string | null
           cancelled_at?: string | null
           city?: string

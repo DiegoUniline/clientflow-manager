@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   Dialog,
   DialogContent,
@@ -7,7 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { History, ArrowRight } from 'lucide-react';
+import { History, ArrowRight, User } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { formatPhoneDisplay } from '@/lib/phoneUtils';
 import type { Prospect } from '@/types/database';
@@ -34,6 +35,24 @@ export function ProspectDetailDialog({
   const [changeHistory, setChangeHistory] = useState<ChangeHistoryItem[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  // Fetch employees for technician name lookup
+  const { data: employees = [] } = useQuery({
+    queryKey: ['employees'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('user_id, full_name')
+        .order('full_name');
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const getTechnicianName = (userId: string | null) => {
+    if (!userId) return null;
+    const emp = employees.find(e => e.user_id === userId);
+    return emp?.full_name || 'Desconocido';
+  };
   useEffect(() => {
     const fetchChangeHistory = async () => {
       if (!prospect || prospect.status !== 'finalized') {
@@ -180,6 +199,14 @@ export function ProspectDetailDialog({
                   <p className="font-medium">
                     {new Date(prospect.assigned_date).toLocaleDateString('es-MX')}
                   </p>
+                </div>
+              )}
+              {prospect.assigned_to && (
+                <div>
+                  <p className="text-sm text-muted-foreground flex items-center gap-1">
+                    <User className="h-3 w-3" /> Técnico Asignado
+                  </p>
+                  <p className="font-medium">{getTechnicianName(prospect.assigned_to)}</p>
                 </div>
               )}
               {prospect.ssid && (

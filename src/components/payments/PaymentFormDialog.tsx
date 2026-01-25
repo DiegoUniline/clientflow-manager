@@ -249,19 +249,61 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
         }
       }
 
+      // If there's remaining payment after paying all debts, create advance payment
+      if (remainingPayment > 0 && client.client_billing) {
+        const currentBalance = client.client_billing.balance || 0;
+        const totalPendingDebt = pendingCharges?.reduce((sum, c) => sum + c.amount, 0) || 0;
+        
+        // Only create advance payment if client has no more debt and there's excess
+        if (remainingPayment > totalPendingDebt && client.client_billing.monthly_fee > 0) {
+          const monthlyFee = client.client_billing.monthly_fee;
+          const excessAfterDebt = remainingPayment;
+          
+          // Calculate how many months can be covered
+          let monthsToCover = Math.floor(excessAfterDebt / monthlyFee);
+          let excessAmount = excessAfterDebt % monthlyFee;
+          
+          // Create advance mensualidad charges if there's enough for at least one month
+          if (monthsToCover > 0) {
+            const currentDate = new Date();
+            const advanceCharges = [];
+            
+            for (let i = 1; i <= monthsToCover; i++) {
+              const futureDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + i, 1);
+              const futureMonth = futureDate.getMonth() + 1;
+              const futureYear = futureDate.getFullYear();
+              
+              advanceCharges.push({
+                client_id: client.id,
+                description: `Mensualidad adelantada ${futureMonth}/${futureYear}`,
+                amount: monthlyFee,
+                status: 'paid',
+                paid_date: data.payment_date,
+                payment_id: paymentId,
+                created_by: user?.id,
+              });
+            }
+            
+            if (advanceCharges.length > 0) {
+              const { error: advanceError } = await supabase
+                .from('client_charges')
+                .insert(advanceCharges);
+              
+              if (advanceError) {
+                console.error('Error creating advance charges:', advanceError);
+              }
+            }
+          }
+        }
+      }
+
       // Update client balance
       // Balance change = -(cash payment) + (credit used - credit used) = -cash payment
       // But we also consume the credit, so: new balance = old balance - cash - credit used + credit used = old balance - cash
-      // Wait, that's wrong. If we use credit, we're reducing the credit balance.
       // old balance is negative (credit). If we use credit, balance goes towards 0.
       // new balance = old balance - cash + credit used (because credit was negative, using it adds to balance)
       if (client.client_billing) {
-        // old_balance - cash_paid + credit_used_from_negative_balance
-        // Example: balance = -200 (credit), cash = 250, credit_used = 200
-        // new_balance = -200 - 250 + 200 = -250? No that's wrong
-        // Actually: we have -200 credit, we use 200 of it (becomes 0), then pay 250 cash (becomes -250 again)
-        // So: new_balance = old_balance + credit_used - cash_paid
-        // = -200 + 200 - 250 = -250 ✓
+        // old_balance + credit_used - cash_paid
         const newBalance = (client.client_billing.balance || 0) + creditUsed - cashAmount;
         const { error: balanceError } = await supabase
           .from('client_billing')
@@ -286,6 +328,7 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
       setUseCreditBalance(false);
       setCreditAmountToUse(0);
       onSuccess();
+      onOpenChange(false);
     } catch (error: any) {
       console.error('Error:', error);
       toast.error(error.message || 'Error al registrar el pago');

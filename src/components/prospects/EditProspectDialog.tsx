@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useQuery } from '@tanstack/react-query';
 import {
   Dialog,
   DialogContent,
@@ -16,6 +17,13 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -45,6 +53,7 @@ const prospectSchema = z.object({
   work_type: z.string().max(100).optional(),
   request_date: z.string().min(1, 'La fecha de solicitud es requerida'),
   assigned_date: z.string().optional(),
+  assigned_to: z.string().optional(),
   ssid: z.string().max(50).optional(),
   antenna_ip: z.string().max(50).optional(),
   notes: z.string().max(1000).optional(),
@@ -68,6 +77,18 @@ export function EditProspectDialog({
 }: EditProspectDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
 
+  // Fetch employees for technician selector
+  const { data: employees = [] } = useQuery({
+    queryKey: ['employees'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('user_id, full_name')
+        .order('full_name');
+      if (error) throw error;
+      return data;
+    },
+  });
   const form = useForm<ProspectFormValues>({
     resolver: zodResolver(prospectSchema),
     defaultValues: {
@@ -89,6 +110,7 @@ export function EditProspectDialog({
       work_type: '',
       request_date: '',
       assigned_date: '',
+      assigned_to: '',
       ssid: '',
       antenna_ip: '',
       notes: '',
@@ -117,6 +139,7 @@ export function EditProspectDialog({
         work_type: prospect.work_type || '',
         request_date: prospect.request_date || '',
         assigned_date: prospect.assigned_date || '',
+        assigned_to: prospect.assigned_to || '',
         ssid: prospect.ssid || '',
         antenna_ip: prospect.antenna_ip || '',
         notes: prospect.notes || '',
@@ -150,6 +173,7 @@ export function EditProspectDialog({
         { key: 'work_type', label: 'Tipo de Trabajo' },
         { key: 'request_date', label: 'Fecha de Solicitud' },
         { key: 'assigned_date', label: 'Fecha Asignada' },
+        { key: 'assigned_to', label: 'Técnico Asignado' },
         { key: 'ssid', label: 'SSID' },
         { key: 'antenna_ip', label: 'IP Antena' },
         { key: 'notes', label: 'Notas' },
@@ -195,6 +219,7 @@ export function EditProspectDialog({
           work_type: values.work_type || null,
           request_date: values.request_date,
           assigned_date: values.assigned_date || null,
+          assigned_to: values.assigned_to || null,
           ssid: values.ssid || null,
           antenna_ip: values.antenna_ip || null,
           notes: values.notes || null,
@@ -491,6 +516,33 @@ export function EditProspectDialog({
                       <FormControl>
                         <Input type="date" {...field} />
                       </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="assigned_to"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Técnico Asignado</FormLabel>
+                      <Select
+                        value={field.value || ''}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Seleccionar técnico" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {employees.map((emp) => (
+                            <SelectItem key={emp.user_id} value={emp.user_id}>
+                              {emp.full_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}

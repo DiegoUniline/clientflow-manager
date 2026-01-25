@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useQuery } from '@tanstack/react-query';
 import {
   Dialog,
   DialogContent,
@@ -16,6 +17,13 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -45,6 +53,7 @@ const prospectSchema = z.object({
   work_type: z.string().max(100).optional(),
   request_date: z.string().min(1, 'La fecha de solicitud es requerida'),
   assigned_date: z.string().optional(),
+  assigned_to: z.string().optional(),
   ssid: z.string().max(50).optional(),
   antenna_ip: z.string().max(50).optional(),
   notes: z.string().max(1000).optional(),
@@ -65,6 +74,19 @@ export function ProspectFormDialog({
 }: ProspectFormDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
   const { user } = useAuth();
+
+  // Fetch employees for technician selector
+  const { data: employees = [] } = useQuery({
+    queryKey: ['employees'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('user_id, full_name')
+        .order('full_name');
+      if (error) throw error;
+      return data;
+    },
+  });
 
   const form = useForm<ProspectFormValues>({
     resolver: zodResolver(prospectSchema),
@@ -87,6 +109,7 @@ export function ProspectFormDialog({
       work_type: '',
       request_date: new Date().toISOString().split('T')[0],
       assigned_date: '',
+      assigned_to: '',
       ssid: '',
       antenna_ip: '',
       notes: '',
@@ -115,6 +138,7 @@ export function ProspectFormDialog({
         work_type: values.work_type || null,
         request_date: values.request_date,
         assigned_date: values.assigned_date || null,
+        assigned_to: values.assigned_to || null,
         ssid: values.ssid || null,
         antenna_ip: values.antenna_ip || null,
         notes: values.notes || null,
@@ -393,6 +417,33 @@ export function ProspectFormDialog({
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="assigned_to"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Técnico Asignado</FormLabel>
+                      <Select
+                        value={field.value || ''}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Seleccionar técnico" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {employees.map((emp) => (
+                            <SelectItem key={emp.user_id} value={emp.user_id}>
+                              {emp.full_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField
@@ -423,7 +474,6 @@ export function ProspectFormDialog({
                 />
               </div>
             </div>
-
             {/* Notas */}
             <FormField
               control={form.control}

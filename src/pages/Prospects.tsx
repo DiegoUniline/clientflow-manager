@@ -8,12 +8,13 @@ import { SearchInput } from '@/components/shared/SearchInput';
 import { DataTable } from '@/components/shared/DataTable';
 import { supabase } from '@/integrations/supabase/client';
 import { exportToCSV } from '@/lib/exportToExcel';
-import { Plus, Download, Eye, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Download, Eye, CheckCircle, XCircle, Edit } from 'lucide-react';
 import { toast } from 'sonner';
 import { ProspectFormDialog } from '@/components/prospects/ProspectFormDialog';
 import { ProspectDetailDialog } from '@/components/prospects/ProspectDetailDialog';
 import { FinalizeProspectDialog } from '@/components/prospects/FinalizeProspectDialog';
 import { CancelProspectDialog } from '@/components/prospects/CancelProspectDialog';
+import { EditProspectDialog } from '@/components/prospects/EditProspectDialog';
 import type { Prospect } from '@/types/database';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -25,6 +26,7 @@ export default function Prospects() {
   const [showDetailDialog, setShowDetailDialog] = useState(false);
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
   const [selectedProspect, setSelectedProspect] = useState<Prospect | null>(null);
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
@@ -104,6 +106,11 @@ export default function Prospects() {
     setShowCancelDialog(true);
   };
 
+  const handleEdit = (prospect: Prospect) => {
+    setSelectedProspect(prospect);
+    setShowEditDialog(true);
+  };
+
   const columns = [
     {
       key: 'name',
@@ -139,7 +146,7 @@ export default function Prospects() {
       key: 'actions',
       header: 'Acciones',
       render: (p: Prospect) => (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
@@ -147,8 +154,20 @@ export default function Prospects() {
               e.stopPropagation();
               handleView(p);
             }}
+            title="Ver detalles"
           >
             <Eye className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleEdit(p);
+            }}
+            title="Editar prospecto"
+          >
+            <Edit className="h-4 w-4" />
           </Button>
           {isAdmin && (
             <>
@@ -160,6 +179,7 @@ export default function Prospects() {
                   e.stopPropagation();
                   handleFinalize(p);
                 }}
+                title="Convertir a cliente"
               >
                 <CheckCircle className="h-4 w-4" />
               </Button>
@@ -171,6 +191,7 @@ export default function Prospects() {
                   e.stopPropagation();
                   handleCancel(p);
                 }}
+                title="Cancelar prospecto"
               >
                 <XCircle className="h-4 w-4" />
               </Button>
@@ -242,6 +263,13 @@ export default function Prospects() {
       <CancelProspectDialog
         open={showCancelDialog}
         onOpenChange={setShowCancelDialog}
+        prospect={selectedProspect}
+        onSuccess={fetchProspects}
+      />
+
+      <EditProspectDialog
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
         prospect={selectedProspect}
         onSuccess={fetchProspects}
       />
