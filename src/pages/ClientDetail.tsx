@@ -367,6 +367,18 @@ export default function ClientDetail() {
     },
   });
 
+  // Fetch banks for displaying names
+  const { data: banks = [] } = useQuery({
+    queryKey: ['banks_all'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('banks')
+        .select('id, name, short_name');
+      if (error) throw error;
+      return data;
+    },
+  });
+
   // Fetch charge catalog
   const { data: chargeCatalog = [] } = useQuery({
     queryKey: ['charge_catalog'],
@@ -384,6 +396,11 @@ export default function ClientDetail() {
   const getPaymentMethodName = (paymentTypeId: string) => {
     const method = paymentMethods.find(pm => pm.id === paymentTypeId);
     return method?.name || paymentTypeId;
+  };
+
+  const getBankName = (bankId: string) => {
+    const bank = banks.find(b => b.id === bankId);
+    return bank?.short_name || bank?.name || bankId;
   };
 
   // Initialize edited data when client changes
@@ -1554,193 +1571,309 @@ export default function ClientDetail() {
 
           {/* TAB ESTADO CUENTA */}
           <TabsContent value="estado-cuenta" className="mt-4 space-y-4">
-            {/* Initial costs summary */}
-            {billing && (billing.installation_cost > 0 || billing.prorated_amount > 0 || (billing.additional_charges || 0) > 0) && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2">
-                    <DollarSign className="h-5 w-5" />
-                    Costos Iniciales
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-4 gap-4">
-                    <div className="bg-muted/50 p-4 rounded-lg text-center">
-                      <p className="text-xs text-muted-foreground uppercase">Instalación</p>
-                      <p className="text-xl font-bold">{formatCurrency(billing.installation_cost || 0)}</p>
-                    </div>
-                    <div className="bg-muted/50 p-4 rounded-lg text-center">
-                      <p className="text-xs text-muted-foreground uppercase">Prorrateo</p>
-                      <p className="text-xl font-bold">{formatCurrency(billing.prorated_amount || 0)}</p>
-                    </div>
-                    <div className="bg-muted/50 p-4 rounded-lg text-center">
-                      <p className="text-xs text-muted-foreground uppercase">Cargos Adicionales</p>
-                      <p className="text-xl font-bold">{formatCurrency(billing.additional_charges || 0)}</p>
-                      {billing.additional_charges_notes && (
-                        <p className="text-xs text-muted-foreground mt-1">{billing.additional_charges_notes}</p>
-                      )}
-                    </div>
-                    <div className="bg-primary/10 p-4 rounded-lg text-center">
-                      <p className="text-xs text-muted-foreground uppercase">Total Inicial</p>
-                      <p className="text-xl font-bold text-primary">
-                        {formatCurrency((billing.installation_cost || 0) + (billing.prorated_amount || 0) + (billing.additional_charges || 0))}
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            <Tabs defaultValue="cargos" className="w-full">
+              <TabsList className="bg-muted/50 p-1 h-auto">
+                <TabsTrigger value="cargos" className="data-[state=active]:bg-background">
+                  <Receipt className="h-4 w-4 mr-2" />
+                  Todos los Cargos
+                </TabsTrigger>
+                <TabsTrigger value="pagos" className="data-[state=active]:bg-background">
+                  <DollarSign className="h-4 w-4 mr-2" />
+                  Pagos Recibidos
+                </TabsTrigger>
+              </TabsList>
 
-            {/* Add Extra Charge Form */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Plus className="h-5 w-5" />
-                  Agregar Cargo Extra
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-4 gap-3 items-end">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Tipo de Cargo</Label>
-                    <Select value={selectedChargeType} onValueChange={handleSelectChargeType}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar tipo..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {chargeCatalog.map((item: any) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            {item.name} ({formatCurrency(item.default_amount)})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Descripción</Label>
-                    <Input
-                      placeholder="Descripción del cargo"
-                      value={extraChargeDescription}
-                      onChange={(e) => setExtraChargeDescription(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Monto</Label>
-                    <Input
-                      type="number"
-                      placeholder="0.00"
-                      value={extraChargeAmount}
-                      onChange={(e) => setExtraChargeAmount(e.target.value)}
-                    />
-                  </div>
-                  <Button 
-                    onClick={handleAddExtraCharge} 
-                    disabled={isAddingExtraCharge || !extraChargeAmount}
-                  >
-                    {isAddingExtraCharge ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : (
-                      <Plus className="h-4 w-4 mr-2" />
-                    )}
-                    Agregar
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Pending charges */}
-            {pendingCharges.length > 0 && (
-              <Card className="border-amber-200 bg-amber-50/50">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg flex items-center gap-2 text-amber-700">
-                    <AlertCircle className="h-5 w-5" />
-                    Cargos Pendientes ({pendingCharges.length})
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>DESCRIPCIÓN</TableHead>
-                        <TableHead>MONTO</TableHead>
-                        <TableHead>FECHA</TableHead>
-                        <TableHead>ESTATUS</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pendingCharges.map((charge: any) => (
-                        <TableRow key={charge.id}>
-                          <TableCell>{charge.description}</TableCell>
-                          <TableCell className="font-medium">{formatCurrency(charge.amount)}</TableCell>
-                          <TableCell>{format(new Date(charge.created_at), 'dd/MM/yyyy')}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-300">
-                              <Clock className="h-3 w-3 mr-1" />
-                              Pendiente
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                  <div className="flex justify-end mt-3 pt-3 border-t">
-                    <span className="font-bold text-amber-700">
-                      Total Pendiente: {formatCurrency(totalPendingCharges)}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Payment history */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Receipt className="h-5 w-5" />
-                  Historial de Pagos
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {payments.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>FECHA</TableHead>
-                        <TableHead>MONTO</TableHead>
-                        <TableHead>TIPO</TableHead>
-                        <TableHead>PERIODO</TableHead>
-                        <TableHead>RECIBO</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {payments.map((payment) => (
-                        <TableRow key={payment.id}>
-                          <TableCell>
-                            {format(new Date(payment.payment_date), 'dd/MM/yyyy')}
-                          </TableCell>
-                          <TableCell className="font-medium text-emerald-600">
-                            {formatCurrency(payment.amount)}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{getPaymentMethodName(payment.payment_type)}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            {payment.period_month && payment.period_year 
-                              ? `${payment.period_month}/${payment.period_year}`
-                              : '-'}
-                          </TableCell>
-                          <TableCell>{payment.receipt_number || '-'}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <p className="text-muted-foreground text-center py-8">
-                    No hay pagos registrados
-                  </p>
+              {/* Sub-tab: Todos los Cargos */}
+              <TabsContent value="cargos" className="mt-4 space-y-4">
+                {/* Initial costs summary */}
+                {billing && (billing.installation_cost > 0 || billing.prorated_amount > 0 || (billing.additional_charges || 0) > 0) && (
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <DollarSign className="h-5 w-5" />
+                        Costos Iniciales
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-4 gap-4">
+                        <div className="bg-muted/50 p-4 rounded-lg text-center">
+                          <p className="text-xs text-muted-foreground uppercase">Instalación</p>
+                          <p className="text-xl font-bold">{formatCurrency(billing.installation_cost || 0)}</p>
+                        </div>
+                        <div className="bg-muted/50 p-4 rounded-lg text-center">
+                          <p className="text-xs text-muted-foreground uppercase">Prorrateo</p>
+                          <p className="text-xl font-bold">{formatCurrency(billing.prorated_amount || 0)}</p>
+                        </div>
+                        <div className="bg-muted/50 p-4 rounded-lg text-center">
+                          <p className="text-xs text-muted-foreground uppercase">Cargos Adicionales</p>
+                          <p className="text-xl font-bold">{formatCurrency(billing.additional_charges || 0)}</p>
+                          {billing.additional_charges_notes && (
+                            <p className="text-xs text-muted-foreground mt-1">{billing.additional_charges_notes}</p>
+                          )}
+                        </div>
+                        <div className="bg-primary/10 p-4 rounded-lg text-center">
+                          <p className="text-xs text-muted-foreground uppercase">Total Inicial</p>
+                          <p className="text-xl font-bold text-primary">
+                            {formatCurrency((billing.installation_cost || 0) + (billing.prorated_amount || 0) + (billing.additional_charges || 0))}
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
                 )}
-              </CardContent>
-            </Card>
+
+                {/* Add Extra Charge Form */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Plus className="h-5 w-5" />
+                      Agregar Cargo Extra
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-4 gap-3 items-end">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Tipo de Cargo</Label>
+                        <Select value={selectedChargeType} onValueChange={handleSelectChargeType}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Seleccionar tipo..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {chargeCatalog.map((item: any) => (
+                              <SelectItem key={item.id} value={item.id}>
+                                {item.name} ({formatCurrency(item.default_amount)})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Descripción</Label>
+                        <Input
+                          placeholder="Descripción del cargo"
+                          value={extraChargeDescription}
+                          onChange={(e) => setExtraChargeDescription(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Monto</Label>
+                        <Input
+                          type="number"
+                          placeholder="0.00"
+                          value={extraChargeAmount}
+                          onChange={(e) => setExtraChargeAmount(e.target.value)}
+                        />
+                      </div>
+                      <Button 
+                        onClick={handleAddExtraCharge} 
+                        disabled={isAddingExtraCharge || !extraChargeAmount}
+                      >
+                        {isAddingExtraCharge ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : (
+                          <Plus className="h-4 w-4 mr-2" />
+                        )}
+                        Agregar
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Summary of charges */}
+                <div className="grid grid-cols-3 gap-4">
+                  <Card className="border-amber-200 dark:border-amber-800">
+                    <CardContent className="pt-4 pb-3 text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Total Cargos</p>
+                      <p className="text-2xl font-bold">{charges.length}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-emerald-200 dark:border-emerald-800">
+                    <CardContent className="pt-4 pb-3 text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Pagados</p>
+                      <p className="text-2xl font-bold text-emerald-600">
+                        {charges.filter((c: any) => c.status === 'paid').length}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-red-200 dark:border-red-800">
+                    <CardContent className="pt-4 pb-3 text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Pendientes</p>
+                      <p className="text-2xl font-bold text-red-600">
+                        {pendingCharges.length}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* All charges table */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Receipt className="h-5 w-5" />
+                      Historial de Cargos ({charges.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {charges.length > 0 ? (
+                      <div className="max-h-[500px] overflow-y-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>FECHA</TableHead>
+                              <TableHead>DESCRIPCIÓN</TableHead>
+                              <TableHead>MONTO</TableHead>
+                              <TableHead>ESTATUS</TableHead>
+                              <TableHead>FECHA PAGO</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {charges.map((charge: any) => (
+                              <TableRow key={charge.id}>
+                                <TableCell className="text-muted-foreground">
+                                  {format(new Date(charge.created_at), 'dd/MM/yyyy')}
+                                </TableCell>
+                                <TableCell className="font-medium">{charge.description}</TableCell>
+                                <TableCell className="font-medium">{formatCurrency(charge.amount)}</TableCell>
+                                <TableCell>
+                                  {charge.status === 'paid' ? (
+                                    <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-900/50 dark:text-emerald-400 dark:border-emerald-700">
+                                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                                      Pagado
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/50 dark:text-amber-400 dark:border-amber-700">
+                                      <Clock className="h-3 w-3 mr-1" />
+                                      Pendiente
+                                    </Badge>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {charge.paid_date 
+                                    ? format(new Date(charge.paid_date), 'dd/MM/yyyy')
+                                    : '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground text-center py-8">
+                        No hay cargos registrados
+                      </p>
+                    )}
+                    {charges.length > 0 && (
+                      <div className="flex justify-between mt-3 pt-3 border-t">
+                        <span className="text-muted-foreground">
+                          Total Pagado: <span className="font-bold text-emerald-600">
+                            {formatCurrency(charges.filter((c: any) => c.status === 'paid').reduce((sum: number, c: any) => sum + Number(c.amount), 0))}
+                          </span>
+                        </span>
+                        <span className="text-muted-foreground">
+                          Total Pendiente: <span className="font-bold text-amber-600">
+                            {formatCurrency(totalPendingCharges)}
+                          </span>
+                        </span>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              {/* Sub-tab: Pagos Recibidos */}
+              <TabsContent value="pagos" className="mt-4 space-y-4">
+                {/* Summary of payments */}
+                <div className="grid grid-cols-3 gap-4">
+                  <Card className="border-emerald-200 dark:border-emerald-800">
+                    <CardContent className="pt-4 pb-3 text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Total Pagos</p>
+                      <p className="text-2xl font-bold">{payments.length}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/30">
+                    <CardContent className="pt-4 pb-3 text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Total Recaudado</p>
+                      <p className="text-2xl font-bold text-emerald-600">
+                        {formatCurrency(payments.reduce((sum, p) => sum + Number(p.amount), 0))}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4 pb-3 text-center">
+                      <p className="text-xs text-muted-foreground uppercase">Último Pago</p>
+                      <p className="text-2xl font-bold">
+                        {payments.length > 0 
+                          ? format(new Date(payments[0].payment_date), 'dd/MM/yy')
+                          : '-'}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Payments table */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <DollarSign className="h-5 w-5" />
+                      Historial de Pagos Recibidos ({payments.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {payments.length > 0 ? (
+                      <div className="max-h-[500px] overflow-y-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>FECHA</TableHead>
+                              <TableHead>MONTO</TableHead>
+                              <TableHead>MÉTODO DE PAGO</TableHead>
+                              <TableHead>BANCO</TableHead>
+                              <TableHead>RECIBO</TableHead>
+                              <TableHead>NOTAS</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {payments.map((payment) => (
+                              <TableRow key={payment.id}>
+                                <TableCell>
+                                  {format(new Date(payment.payment_date), 'dd/MM/yyyy')}
+                                </TableCell>
+                                <TableCell className="font-bold text-emerald-600">
+                                  {formatCurrency(payment.amount)}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant="outline">{getPaymentMethodName(payment.payment_type)}</Badge>
+                                </TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {payment.bank_type ? getBankName(payment.bank_type) : '-'}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground">
+                                  {payment.receipt_number || '-'}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground text-sm max-w-[200px] truncate">
+                                  {payment.notes || '-'}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground text-center py-8">
+                        No hay pagos registrados
+                      </p>
+                    )}
+                    {payments.length > 0 && (
+                      <div className="flex justify-end mt-3 pt-3 border-t">
+                        <span className="font-bold text-emerald-600 text-lg">
+                          Total: {formatCurrency(payments.reduce((sum, p) => sum + Number(p.amount), 0))}
+                        </span>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
           </TabsContent>
 
           {/* TAB DOCUMENTOS */}
