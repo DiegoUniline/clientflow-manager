@@ -180,10 +180,13 @@ export function PaymentFormDialog({ client, open, onOpenChange, onSuccess }: Pay
         paymentId = paymentData.id;
       } else if (creditUsed > 0) {
         // Create a special payment record for credit balance usage
+        // Find a payment method for "Saldo a favor" or use a default
+        const saldoFavorMethod = paymentMethods.find(pm => pm.name.toLowerCase().includes('saldo'));
+        
         const { data: paymentData, error: paymentError } = await supabase.from('payments').insert({
           client_id: client.id,
           amount: 0,
-          payment_type: 'Saldo a favor',
+          payment_type: saldoFavorMethod?.id || paymentMethods[0]?.id || 'Saldo a favor',
           payment_date: data.payment_date,
           notes: `Aplicación de saldo a favor: $${creditUsed.toLocaleString()}`,
           created_by: user?.id,
