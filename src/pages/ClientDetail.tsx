@@ -85,6 +85,55 @@ function getNextBillingDate(billingDay: number): Date {
   return nextBilling;
 }
 
+// Función para calcular próximo vencimiento basado en mensualidades pagadas
+function getNextDueDateFromCharges(charges: any[], billingDay: number): { date: Date; coveredUntil: string | null } {
+  // Filtrar solo mensualidades pagadas
+  const paidMensualidades = charges.filter((c: any) => 
+    c.description?.toLowerCase().includes('mensualidad') && 
+    c.status === 'paid'
+  );
+  
+  if (paidMensualidades.length === 0) {
+    // Sin mensualidades pagadas, usar cálculo tradicional
+    return { date: getNextBillingDate(billingDay), coveredUntil: null };
+  }
+  
+  // Encontrar el mes/año más alto
+  let maxMonth = 0;
+  let maxYear = 0;
+  
+  paidMensualidades.forEach((charge: any) => {
+    const match = charge.description?.match(/(\d{1,2})\/(\d{4})/);
+    if (match) {
+      const month = parseInt(match[1]);
+      const year = parseInt(match[2]);
+      if (year > maxYear || (year === maxYear && month > maxMonth)) {
+        maxYear = year;
+        maxMonth = month;
+      }
+    }
+  });
+  
+  if (maxYear === 0) {
+    return { date: getNextBillingDate(billingDay), coveredUntil: null };
+  }
+  
+  // El siguiente mes después del último pagado
+  let nextMonth = maxMonth + 1;
+  let nextYear = maxYear;
+  if (nextMonth > 12) {
+    nextMonth = 1;
+    nextYear++;
+  }
+  
+  const coveredUntil = format(new Date(maxYear, maxMonth - 1, 1), 'MMMM yyyy', { locale: es });
+  
+  return {
+    date: new Date(nextYear, nextMonth - 1, billingDay),
+    coveredUntil
+  };
+}
+
 // Función para generar ID de cliente
 function generateClientCode(id: string): string {
   return `#CLI${id.slice(0, 6).toUpperCase()}`;
@@ -385,15 +434,33 @@ export default function ClientDetail() {
   const billing = billingData || client?.client_billing as any;
   const equipment = client?.equipment?.[0] as any;
   const billingDay = billing?.billing_day || 10;
-  const nextBillingDate = getNextBillingDate(billingDay);
   
-  const balance = billing?.balance || 0;
-  const hasFavorBalance = balance < 0;
-  const hasDebt = balance > 0;
-  const displayBalance = Math.abs(balance);
+  // Calcular próximo vencimiento basado en mensualidades pagadas
+  const { date: nextDueDate, coveredUntil } = useMemo(() => {
+    return getNextDueDateFromCharges(charges, billingDay);
+  }, [charges, billingDay]);
 
   const pendingCharges = charges.filter((c: any) => c.status === 'pending');
   const totalPendingCharges = pendingCharges.reduce((sum: number, c: any) => sum + c.amount, 0);
+
+  // Calcular saldo efectivo basado en cargos pendientes
+  const pendingChargesTotal = useMemo(() => {
+    return charges
+      .filter((c: any) => c.status === 'pending')
+      .reduce((sum: number, c: any) => sum + Number(c.amount), 0);
+  }, [charges]);
+
+  const hasAdvancePayments = useMemo(() => {
+    return charges.some((c: any) => 
+      c.description?.toLowerCase().includes('mensualidad adelantada') && 
+      c.status === 'paid'
+    );
+  }, [charges]);
+
+  // El saldo efectivo es el total de cargos pendientes
+  const isUpToDate = pendingChargesTotal === 0 && hasAdvancePayments;
+  const hasDebt = pendingChargesTotal > 0;
+  const displayBalance = isUpToDate ? 0 : pendingChargesTotal;
 
   const mensualidadCharges = charges.filter((c: any) => 
     c.description?.toLowerCase().includes('mensualidad')
@@ -1054,42 +1121,44 @@ export default function ClientDetail() {
             </CardContent>
           </Card>
 
-          <Card className={`border-2 ${hasFavorBalance ? 'border-emerald-200 bg-emerald-50/50' : hasDebt ? 'border-red-200 bg-red-50/50' : ''}`}>
+          <Card className={`border-2 ${isUpToDate ? 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/30' : hasDebt ? 'border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30' : ''}`}>
             <CardContent className="pt-4 pb-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Saldo Actual</span>
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${hasFavorBalance ? 'bg-emerald-100' : hasDebt ? 'bg-red-100' : 'bg-muted'}`}>
-                  <CreditCard className={`h-5 w-5 ${hasFavorBalance ? 'text-emerald-600' : hasDebt ? 'text-red-600' : 'text-muted-foreground'}`} />
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${isUpToDate ? 'bg-emerald-100 dark:bg-emerald-900/50' : hasDebt ? 'bg-red-100 dark:bg-red-900/50' : 'bg-muted'}`}>
+                  <CreditCard className={`h-5 w-5 ${isUpToDate ? 'text-emerald-600' : hasDebt ? 'text-red-600' : 'text-muted-foreground'}`} />
                 </div>
               </div>
-              <p className={`text-3xl font-bold ${hasFavorBalance ? 'text-emerald-600' : hasDebt ? 'text-red-600' : ''}`}>
-                {hasFavorBalance ? '-' : ''}{formatCurrency(displayBalance)}
+              <p className={`text-3xl font-bold ${isUpToDate ? 'text-emerald-600' : hasDebt ? 'text-red-600' : ''}`}>
+                {formatCurrency(displayBalance)}
               </p>
               <p className="text-xs flex items-center gap-1 mt-1">
-                <span className={`w-2 h-2 rounded-full ${hasFavorBalance ? 'bg-emerald-500' : hasDebt ? 'bg-red-500' : 'bg-emerald-500'}`}></span>
-                <span className={hasFavorBalance ? 'text-emerald-600' : hasDebt ? 'text-red-600' : 'text-emerald-600'}>
-                  {hasFavorBalance ? 'Saldo a favor' : hasDebt ? 'Con adeudo' : 'Cuenta al corriente'}
+                <span className={`w-2 h-2 rounded-full ${isUpToDate ? 'bg-emerald-500' : hasDebt ? 'bg-red-500' : 'bg-emerald-500'}`}></span>
+                <span className={isUpToDate ? 'text-emerald-600' : hasDebt ? 'text-red-600' : 'text-emerald-600'}>
+                  {isUpToDate ? 'Pagado por adelantado' : hasDebt ? 'Con adeudo' : 'Cuenta al corriente'}
                 </span>
               </p>
             </CardContent>
           </Card>
 
-          <Card className="border-2">
+          <Card className={`border-2 ${coveredUntil ? 'border-emerald-200 dark:border-emerald-800' : ''}`}>
             <CardContent className="pt-4 pb-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Próximo Vencimiento</span>
-                <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
-                  <Calendar className="h-5 w-5 text-amber-600" />
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${coveredUntil ? 'bg-emerald-100 dark:bg-emerald-900/50' : 'bg-amber-100 dark:bg-amber-900/50'}`}>
+                  <Calendar className={`h-5 w-5 ${coveredUntil ? 'text-emerald-600' : 'text-amber-600'}`} />
                 </div>
               </div>
               <p className="text-2xl font-bold">
-                {format(nextBillingDate, 'dd MMM yyyy', { locale: es })}
+                {format(nextDueDate, 'dd MMM yyyy', { locale: es })}
               </p>
               <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                {pendingCharges.length > 0 
-                  ? `${pendingCharges.length} cargo(s) pendiente(s)` 
-                  : 'Sin cargos pendientes'}
+                <span className={`w-2 h-2 rounded-full ${coveredUntil ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                {coveredUntil 
+                  ? `Cubierto hasta ${coveredUntil}` 
+                  : pendingCharges.length > 0 
+                    ? `${pendingCharges.length} cargo(s) pendiente(s)` 
+                    : 'Sin cargos pendientes'}
               </p>
             </CardContent>
           </Card>
