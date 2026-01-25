@@ -38,6 +38,7 @@ export interface Prospect {
   work_type: string | null;
   request_date: string;
   assigned_date: string | null;
+  assigned_to: string | null;
   ssid: string | null;
   antenna_ip: string | null;
   notes: string | null;
