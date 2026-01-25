@@ -1,409 +1,154 @@
 
-# Plan: Mejorar Flujo de Conversión con Resumen y Cargos del Catálogo
+# Plan: Corregir Campo de Costo de Instalación y Prevenir Guardado Accidental
 
-## Resumen del Problema
+## Problemas Identificados
 
-El usuario necesita que el modal de conversión de prospecto a cliente (`FinalizeProspectDialog`):
+### 1. Campo "Costo de Instalación" con 0 inicial
+**Ubicación**: `src/components/prospects/FinalizeProspectDialog.tsx`
+- Línea 159: `installation_cost: 0` como valor por defecto
+- Línea 191: Se resetea a `0` cuando se carga el prospecto
+- Líneas 889-895: El input muestra "0" porque el valor es 0
 
-1. **Muestre un resumen completo** de la facturación inicial con formato moneda
-2. **Los cargos adicionales vengan del catálogo** (`charge_catalog`) en lugar de un input libre
-3. **Navegación por pasos**: Cambiar "Finalizar y Crear Cliente" por "Siguiente" hasta el último paso
-4. **Un tab final de Resumen** que muestre toda la información antes de crear el cliente
+**Problema**: El usuario ve "0" en el campo en lugar de un campo vacío.
+
+### 2. Formulario se guarda automáticamente
+**Ubicación**: `src/components/prospects/FinalizeProspectDialog.tsx`
+- Línea 525: `<form onSubmit={form.handleSubmit(handleFinalize)}>`
+- Línea 1144: El botón "Siguiente" tiene `type="button"` (correcto)
+- **Problema**: Si el usuario presiona Enter en cualquier campo de texto (Input), el formulario se envía automáticamente porque es el comportamiento por defecto de HTML forms.
 
 ---
 
 ## Solución Propuesta
 
-### 1. Agregar Tab de Resumen Final
+### Parte 1: Eliminar 0 Inicial de Campos Numéricos
 
-Agregar un 5to tab llamado **"Resumen"** que muestre:
-- Datos personales del cliente
-- Dirección completa
-- Datos técnicos (SSID, IP)
-- **Resumen de facturación** con formato moneda:
-  - Plan seleccionado
-  - Mensualidad
-  - Costo de instalación
-  - Prorrateo
-  - Cargos adicionales (del catálogo)
-  - **Total saldo inicial**
-
-### 2. Cambiar Cargos Adicionales a Selector del Catálogo
-
-**Cambios en el formulario:**
-
-Reemplazar el input de "Cargos Adicionales" por:
+**Cambios en defaultValues y reset:**
 ```typescript
-// Query para obtener catálogo
-const { data: chargeCatalog = [] } = useQuery({
-  queryKey: ['charge_catalog'],
-  queryFn: async () => {
-    const { data, error } = await supabase
-      .from('charge_catalog')
-      .select('*')
-      .eq('is_active', true)
-      .order('name');
-    if (error) throw error;
-    return data;
-  },
-});
+// Línea 159 - Cambiar de 0 a undefined
+installation_cost: undefined,
+prorated_amount: undefined,
+monthly_fee: undefined,
 
-// Estado para cargos seleccionados (múltiples)
-const [selectedCharges, setSelectedCharges] = useState<{
-  catalog_id: string;
-  name: string;
-  amount: number;
-}[]>([]);
+// Línea 191 - Cambiar reset a undefined
+installation_cost: undefined,
+prorated_amount: undefined,
+monthly_fee: 0, // Este sí debe mostrar 0 si no hay plan
 ```
 
-**UI del selector de cargos:**
-- Select para elegir cargo del catálogo
-- Input para modificar monto (pre-llenado con default_amount)
-- Botón "Agregar"
-- Lista de cargos agregados con opción de eliminar
+**Cambios en los inputs numéricos:**
+Los inputs de tipo `number` con valor `undefined` mostrarán el campo vacío en lugar de "0".
 
-### 3. Navegación por Pasos (Siguiente/Anterior)
-
-**Orden de tabs:**
-1. Personal
-2. Dirección  
-3. Técnico
-4. Facturación
-5. **Resumen** (nuevo)
-
-**Botones del footer:**
-
+Modificar el onChange de los inputs para manejar valores vacíos:
 ```typescript
-const tabs = ['personal', 'address', 'technical', 'billing', 'summary'];
-const currentIndex = tabs.indexOf(activeTab);
-const isLastTab = activeTab === 'summary';
-const isFirstTab = activeTab === 'personal';
-
-// En DialogFooter:
-<Button variant="outline" onClick={() => onOpenChange(false)}>
-  Cancelar
-</Button>
-
-{!isFirstTab && (
-  <Button variant="outline" onClick={() => setActiveTab(tabs[currentIndex - 1])}>
-    Anterior
-  </Button>
-)}
-
-{isLastTab ? (
-  <Button type="submit" className="bg-green-600 hover:bg-green-700">
-    Finalizar y Crear Cliente
-  </Button>
-) : (
-  <Button type="button" onClick={() => setActiveTab(tabs[currentIndex + 1])}>
-    Siguiente
-  </Button>
-)}
+// Líneas 893-894 - Para installation_cost
+onChange={(e) => {
+  const value = e.target.value;
+  field.onChange(value === '' ? undefined : parseFloat(value));
+}}
+value={field.value ?? ''}  // Mostrar vacío si es undefined o 0
 ```
+
+### Parte 2: Prevenir Submit Accidental con Enter
+
+**Opción A - Prevenir Enter en el form (RECOMENDADA):**
+```typescript
+// En el form, línea 525
+<form 
+  onSubmit={form.handleSubmit(handleFinalize)} 
+  onKeyDown={(e) => {
+    if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+      e.preventDefault();
+    }
+  }}
+  className="space-y-4"
+>
+```
+
+Esta solución previene que al presionar Enter en cualquier Input se envíe el formulario. Solo el botón "Finalizar y Crear Cliente" podrá enviar el form.
 
 ---
 
-## Cambios en el Archivo
+## Cambios Específicos
 
-### `src/components/prospects/FinalizeProspectDialog.tsx`
+### Archivo: `src/components/prospects/FinalizeProspectDialog.tsx`
 
-#### 1. Agregar imports y queries
-
+#### 1. Modificar defaultValues (líneas 156-161)
 ```typescript
-// Agregar al schema (modificar additional_charges)
-additional_charges: z.array(z.object({
-  catalog_id: z.string(),
-  name: z.string(),
-  amount: z.number(),
-})).optional(),
-
-// Query para catálogo
-const { data: chargeCatalog = [] } = useQuery({...});
-
-// Estado para cargos seleccionados
-const [selectedCharges, setSelectedCharges] = useState<{
-  catalog_id: string;
-  name: string;
-  amount: number;
-}[]>([]);
-const [selectedChargeId, setSelectedChargeId] = useState('');
-const [chargeAmount, setChargeAmount] = useState('');
-```
-
-#### 2. Modificar TabsList (agregar Resumen)
-
-```typescript
-<TabsList className="grid w-full grid-cols-5">
-  <TabsTrigger value="personal">Personal</TabsTrigger>
-  <TabsTrigger value="address">Dirección</TabsTrigger>
-  <TabsTrigger value="technical">Técnico</TabsTrigger>
-  <TabsTrigger value="billing">Facturación</TabsTrigger>
-  <TabsTrigger value="summary">Resumen</TabsTrigger>
-</TabsList>
-```
-
-#### 3. Reemplazar input de Cargos Adicionales (en tab billing)
-
-```typescript
-{/* Selector de cargos del catálogo */}
-<div className="space-y-3">
-  <FormLabel>Cargos Adicionales</FormLabel>
-  <div className="flex gap-2">
-    <Select value={selectedChargeId} onValueChange={handleChargeSelect}>
-      <SelectTrigger className="flex-1">
-        <SelectValue placeholder="Seleccionar cargo" />
-      </SelectTrigger>
-      <SelectContent>
-        {chargeCatalog.map((item) => (
-          <SelectItem key={item.id} value={item.id}>
-            {item.name} ({formatCurrency(item.default_amount)})
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-    <Input
-      type="number"
-      className="w-32"
-      placeholder="Monto"
-      value={chargeAmount}
-      onChange={(e) => setChargeAmount(e.target.value)}
-    />
-    <Button type="button" variant="outline" onClick={handleAddCharge}>
-      Agregar
-    </Button>
-  </div>
-  
-  {/* Lista de cargos agregados */}
-  {selectedCharges.length > 0 && (
-    <div className="border rounded-lg p-3 space-y-2">
-      {selectedCharges.map((charge, index) => (
-        <div key={index} className="flex justify-between items-center">
-          <span>{charge.name}</span>
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{formatCurrency(charge.amount)}</span>
-            <Button variant="ghost" size="icon" onClick={() => handleRemoveCharge(index)}>
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      ))}
-    </div>
-  )}
-</div>
-```
-
-#### 4. Agregar Tab de Resumen
-
-```typescript
-<TabsContent value="summary" className="space-y-4 pt-4">
-  <div className="space-y-4">
-    {/* Datos Personales */}
-    <Card>
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm">Datos Personales</CardTitle>
-      </CardHeader>
-      <CardContent className="text-sm">
-        <p><strong>Nombre:</strong> {form.watch('first_name')} {form.watch('last_name_paterno')} {form.watch('last_name_materno')}</p>
-        <p><strong>Teléfono:</strong> {formatPhoneNumber(form.watch('phone1'))}</p>
-      </CardContent>
-    </Card>
-
-    {/* Dirección */}
-    <Card>
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm">Dirección</CardTitle>
-      </CardHeader>
-      <CardContent className="text-sm">
-        <p>{form.watch('street')} {form.watch('exterior_number')}{form.watch('interior_number') && ` Int. ${form.watch('interior_number')}`}</p>
-        <p>{form.watch('neighborhood')}, {form.watch('city')}</p>
-      </CardContent>
-    </Card>
-
-    {/* Resumen de Facturación */}
-    <Card className="border-primary">
-      <CardHeader className="py-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <DollarSign className="h-4 w-4" />
-          Resumen de Facturación
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span>Plan:</span>
-            <span className="font-medium">{selectedPlanName}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Mensualidad:</span>
-            <span className="font-medium">{formatCurrency(form.watch('monthly_fee'))}</span>
-          </div>
-          <Separator />
-          <div className="flex justify-between">
-            <span>Costo de Instalación:</span>
-            <span className="font-medium">{formatCurrency(form.watch('installation_cost'))}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Prorrateo:</span>
-            <span className="font-medium">{formatCurrency(form.watch('prorated_amount'))}</span>
-          </div>
-          {selectedCharges.map((charge, i) => (
-            <div key={i} className="flex justify-between">
-              <span>{charge.name}:</span>
-              <span className="font-medium">{formatCurrency(charge.amount)}</span>
-            </div>
-          ))}
-          <Separator />
-          <div className="flex justify-between text-base font-bold text-primary">
-            <span>Total Saldo Inicial:</span>
-            <span>{formatCurrency(totalInitialBalance)}</span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  </div>
-</TabsContent>
-```
-
-#### 5. Modificar DialogFooter
-
-```typescript
-<DialogFooter className="pt-4">
-  <Button
-    type="button"
-    variant="outline"
-    onClick={() => onOpenChange(false)}
-    disabled={isLoading}
-  >
-    Cancelar
-  </Button>
-  
-  {activeTab !== 'personal' && (
-    <Button
-      type="button"
-      variant="outline"
-      onClick={handlePrevious}
-      disabled={isLoading}
-    >
-      Anterior
-    </Button>
-  )}
-  
-  {activeTab === 'summary' ? (
-    <Button
-      type="submit"
-      disabled={isLoading}
-      className="bg-green-600 hover:bg-green-700"
-    >
-      {isLoading ? (
-        <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Finalizando...
-        </>
-      ) : (
-        'Finalizar y Crear Cliente'
-      )}
-    </Button>
-  ) : (
-    <Button type="button" onClick={handleNext}>
-      Siguiente
-    </Button>
-  )}
-</DialogFooter>
-```
-
-#### 6. Actualizar lógica de handleFinalize
-
-Modificar para crear cargos individuales del catálogo:
-
-```typescript
-// Crear cargos adicionales del catálogo
-for (const charge of selectedCharges) {
-  chargesToCreate.push({
-    client_id: clientData.id,
-    charge_catalog_id: charge.catalog_id,
-    description: charge.name,
-    amount: charge.amount,
-    status: 'pending',
-    created_by: user?.id,
-  });
+defaultValues: {
+  // ... otros campos ...
+  monthly_fee: undefined,        // era 0
+  installation_cost: undefined,  // era 0
+  prorated_amount: undefined,    // era 0
 }
 ```
 
----
-
-## Funciones Auxiliares Nuevas
-
+#### 2. Modificar reset en useEffect (líneas 186-193)
 ```typescript
-const tabs = ['personal', 'address', 'technical', 'billing', 'summary'];
+// Billing defaults
+plan_id: '',
+monthly_fee: undefined,          // era 0
+installation_cost: undefined,    // era 0  
+prorated_amount: undefined,      // era 0
+```
 
-const handleNext = () => {
-  const currentIndex = tabs.indexOf(activeTab);
-  if (currentIndex < tabs.length - 1) {
-    setActiveTab(tabs[currentIndex + 1]);
-  }
-};
+#### 3. Modificar input de Costo de Instalación (líneas 889-895)
+```typescript
+<Input
+  type="number"
+  min="0"
+  step="0.01"
+  value={field.value ?? ''}
+  onChange={(e) => {
+    const value = e.target.value;
+    field.onChange(value === '' ? undefined : parseFloat(value));
+  }}
+/>
+```
 
-const handlePrevious = () => {
-  const currentIndex = tabs.indexOf(activeTab);
-  if (currentIndex > 0) {
-    setActiveTab(tabs[currentIndex - 1]);
-  }
-};
+#### 4. Aplicar mismo patrón a otros inputs numéricos
+- Mensualidad (líneas 818-826)
+- Prorrateo (líneas 921-926)
 
-const handleChargeSelect = (catalogId: string) => {
-  setSelectedChargeId(catalogId);
-  const item = chargeCatalog.find(c => c.id === catalogId);
-  if (item) {
-    setChargeAmount(item.default_amount.toString());
-  }
-};
+#### 5. Prevenir submit con Enter (línea 525)
+```typescript
+<form 
+  onSubmit={form.handleSubmit(handleFinalize)} 
+  onKeyDown={(e) => {
+    if (e.key === 'Enter' && e.target instanceof HTMLInputElement) {
+      e.preventDefault();
+    }
+  }}
+  className="space-y-4"
+>
+```
 
-const handleAddCharge = () => {
-  const item = chargeCatalog.find(c => c.id === selectedChargeId);
-  if (item && chargeAmount) {
-    setSelectedCharges([...selectedCharges, {
-      catalog_id: item.id,
-      name: item.name,
-      amount: parseFloat(chargeAmount),
-    }]);
-    setSelectedChargeId('');
-    setChargeAmount('');
-  }
-};
-
-const handleRemoveCharge = (index: number) => {
-  setSelectedCharges(selectedCharges.filter((_, i) => i !== index));
-};
-
-// Total calculado
-const totalAdditionalCharges = selectedCharges.reduce((sum, c) => sum + c.amount, 0);
+#### 6. Actualizar cálculos para manejar undefined
+```typescript
+// En totalInitialBalance (líneas 269-272)
 const totalInitialBalance = 
   (form.watch('installation_cost') || 0) + 
   (form.watch('prorated_amount') || 0) + 
   totalAdditionalCharges;
+// Esto ya maneja undefined correctamente con || 0
 ```
 
 ---
 
-## Resultado Final
+## Resultado Esperado
 
-### Flujo de Usuario:
+1. **Campo Costo de Instalación**: Aparecerá vacío inicialmente, sin "0"
+2. **Campo Prorrateo**: Aparecerá vacío inicialmente, sin "0"  
+3. **Guardado accidental**: Presionar Enter en cualquier campo NO enviará el formulario
+4. **Solo el botón "Finalizar y Crear Cliente"** podrá guardar el cliente
+5. **Los cálculos seguirán funcionando** correctamente tratando undefined como 0
 
-1. **Tab Personal** → Botón "Siguiente"
-2. **Tab Dirección** → Botones "Anterior" / "Siguiente"
-3. **Tab Técnico** → Botones "Anterior" / "Siguiente"
-4. **Tab Facturación** → Botones "Anterior" / "Siguiente"
-   - Selector de plan con precio en formato moneda
-   - Selector de cargos del catálogo con montos predefinidos
-   - Resumen parcial de costos
-5. **Tab Resumen** → Botones "Anterior" / "Finalizar y Crear Cliente"
-   - Datos personales resumidos
-   - Dirección completa
-   - **Resumen de facturación con todos los montos en formato moneda**
-   - Total del saldo inicial destacado
+---
 
-### Beneficios:
-- El usuario puede revisar toda la información antes de confirmar
-- Los cargos adicionales vienen del catálogo con montos predefinidos
-- Navegación clara con pasos definidos
-- Todos los montos se muestran con `formatCurrency()`
+## Flujo de Usuario Corregido
+
+1. Usuario abre el modal de conversión
+2. Los campos de costo están vacíos (no "0")
+3. Usuario navega con "Siguiente" entre tabs
+4. Si presiona Enter en cualquier campo, NO se guarda
+5. Solo al hacer clic en "Finalizar y Crear Cliente" en el tab Resumen se guarda
