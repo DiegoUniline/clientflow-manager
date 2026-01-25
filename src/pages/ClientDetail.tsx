@@ -399,42 +399,93 @@ export default function ClientDetail() {
     c.description?.toLowerCase().includes('mensualidad')
   );
 
-  // Generate mensualidades
+  // Generate mensualidades - now based on client_charges records
   const generateMensualidades = () => {
     if (!billing?.installation_date) return [];
     
+    const monthlyFee = billing?.monthly_fee || 0;
+    const results: Array<{
+      month: number;
+      year: number;
+      monthName: string;
+      monthlyFee: number;
+      totalPaid: number;
+      balance: number;
+      isPaid: boolean;
+      isPartial: boolean;
+      payments: any[];
+      charge: any;
+    }> = [];
+    
+    // Get all mensualidad charges (both regular and advance)
+    const mensualidadChargesAll = charges.filter((c: any) => 
+      c.description?.toLowerCase().includes('mensualidad')
+    );
+    
+    // Extract unique month/year combinations from charges
+    const chargeMonths = new Map<string, { month: number; year: number; charges: any[] }>();
+    
+    mensualidadChargesAll.forEach((charge: any) => {
+      // Extract month/year from description like "Mensualidad 1/2026" or "Mensualidad adelantada 2/2027"
+      const match = charge.description?.match(/(\d{1,2})\/(\d{4})/);
+      if (match) {
+        const month = parseInt(match[1]);
+        const year = parseInt(match[2]);
+        const key = `${month}-${year}`;
+        
+        if (!chargeMonths.has(key)) {
+          chargeMonths.set(key, { month, year, charges: [] });
+        }
+        chargeMonths.get(key)?.charges.push(charge);
+      }
+    });
+    
+    // Also generate months from installation to now (for periods without charges)
     const startDate = startOfMonth(new Date(billing.installation_date));
     const endDate = startOfMonth(new Date());
-    const months = eachMonthOfInterval({ start: startDate, end: endDate });
+    const intervalMonths = eachMonthOfInterval({ start: startDate, end: endDate });
     
-    return months.map(date => {
+    intervalMonths.forEach(date => {
       const month = date.getMonth() + 1;
       const year = date.getFullYear();
-      const monthPayments = payments.filter(p => 
-        p.period_month === month && p.period_year === year
-      );
-      const totalPaid = monthPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-      const monthlyFee = billing?.monthly_fee || 0;
+      const key = `${month}-${year}`;
+      
+      if (!chargeMonths.has(key)) {
+        chargeMonths.set(key, { month, year, charges: [] });
+      }
+    });
+    
+    // Convert to array and calculate totals
+    chargeMonths.forEach(({ month, year, charges: periodCharges }) => {
+      const totalPaid = periodCharges
+        .filter((c: any) => c.status === 'paid')
+        .reduce((sum: number, c: any) => sum + Number(c.amount), 0);
+      
       const isPaid = totalPaid >= monthlyFee;
       const isPartial = totalPaid > 0 && totalPaid < monthlyFee;
       
-      const charge = mensualidadCharges.find((c: any) => 
-        c.description?.includes(`${month}/${year}`)
-      );
+      // Create a date for formatting (1st of that month)
+      const monthDate = new Date(year, month - 1, 1);
       
-      return {
+      results.push({
         month,
         year,
-        monthName: format(date, 'MMMM yyyy', { locale: es }),
+        monthName: format(monthDate, 'MMMM yyyy', { locale: es }),
         monthlyFee,
         totalPaid,
         balance: monthlyFee - totalPaid,
         isPaid,
         isPartial,
-        payments: monthPayments,
-        charge,
-      };
-    }).reverse();
+        payments: [], // Legacy - not used anymore
+        charge: periodCharges[0] || null,
+      });
+    });
+    
+    // Sort by year and month (newest first)
+    return results.sort((a, b) => {
+      if (a.year !== b.year) return b.year - a.year;
+      return b.month - a.month;
+    });
   };
 
   const mensualidades = generateMensualidades();
