@@ -51,7 +51,8 @@ import {
   Calendar, Image, Plus, StickyNote, CreditCard, 
   Receipt, CheckCircle2, Clock, AlertCircle, Edit, Loader2,
   History, ChevronDown, Settings, Router, CalendarClock, Trash2, 
-  MoreHorizontal, RefreshCw, Filter, ArrowLeft, Save, X, Upload, Eye
+  MoreHorizontal, RefreshCw, Filter, ArrowLeft, Save, X, Upload, Eye,
+  FileDown, Printer, Download
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/billing';
 import { formatPhoneNumber, formatPhoneDisplay, PhoneCountry } from '@/lib/phoneUtils';
@@ -63,6 +64,11 @@ import { ChangeEquipmentDialog } from '@/components/clients/ChangeEquipmentDialo
 import { RelocationDialog } from '@/components/clients/RelocationDialog';
 import { PaymentFormDialog } from '@/components/payments/PaymentFormDialog';
 import { InitialBillingDialog } from '@/components/clients/InitialBillingDialog';
+import { PrintableDocument } from '@/components/documents/PrintableDocument';
+import { AccountStatementDocument } from '@/components/documents/AccountStatementDocument';
+import { PaymentReceiptDocument } from '@/components/documents/PaymentReceiptDocument';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import type { Client, ClientBilling, Equipment, Payment } from '@/types/database';
 
 type ClientWithDetails = Client & {
@@ -192,6 +198,17 @@ export default function ClientDetail() {
   const [mensualidadAmount, setMensualidadAmount] = useState('');
   const [mensualidadFilter, setMensualidadFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [mensualidadYearFilter, setMensualidadYearFilter] = useState<string>('all');
+  
+  // Charge filters
+  const [chargeTypeFilter, setChargeTypeFilter] = useState<string>('all');
+  const [chargeDateFrom, setChargeDateFrom] = useState<Date | undefined>(undefined);
+  const [chargeDateTo, setChargeDateTo] = useState<Date | undefined>(undefined);
+  const [chargeStatusFilter, setChargeStatusFilter] = useState<'all' | 'pending' | 'paid'>('all');
+  
+  // Document dialogs
+  const [showAccountStatement, setShowAccountStatement] = useState(false);
+  const [showPaymentReceipt, setShowPaymentReceipt] = useState(false);
+  const [selectedPaymentForReceipt, setSelectedPaymentForReceipt] = useState<any>(null);
   
   // Charge states
   const [editingCharge, setEditingCharge] = useState<any>(null);
@@ -599,6 +616,62 @@ export default function ClientDetail() {
       return true;
     });
   }, [mensualidades, mensualidadFilter, mensualidadYearFilter]);
+
+  // Get unique charge types for filter
+  const chargeTypes = useMemo(() => {
+    const types = new Set<string>();
+    charges.forEach((c: any) => {
+      if (c.description?.toLowerCase().includes('mensualidad')) {
+        types.add('mensualidad');
+      } else if (c.description?.toLowerCase().includes('instalación')) {
+        types.add('instalacion');
+      } else if (c.description?.toLowerCase().includes('prorrateo')) {
+        types.add('prorrateo');
+      } else {
+        types.add('otro');
+      }
+    });
+    return Array.from(types);
+  }, [charges]);
+
+  // Filter charges
+  const filteredCharges = useMemo(() => {
+    return charges.filter((c: any) => {
+      // Status filter
+      if (chargeStatusFilter === 'paid' && c.status !== 'paid') return false;
+      if (chargeStatusFilter === 'pending' && c.status !== 'pending') return false;
+      
+      // Type filter
+      if (chargeTypeFilter !== 'all') {
+        const desc = c.description?.toLowerCase() || '';
+        if (chargeTypeFilter === 'mensualidad' && !desc.includes('mensualidad')) return false;
+        if (chargeTypeFilter === 'instalacion' && !desc.includes('instalación')) return false;
+        if (chargeTypeFilter === 'prorrateo' && !desc.includes('prorrateo')) return false;
+        if (chargeTypeFilter === 'otro') {
+          if (desc.includes('mensualidad') || desc.includes('instalación') || desc.includes('prorrateo')) return false;
+        }
+      }
+      
+      // Date filters
+      if (chargeDateFrom) {
+        const chargeDate = new Date(c.created_at);
+        if (chargeDate < chargeDateFrom) return false;
+      }
+      if (chargeDateTo) {
+        const chargeDate = new Date(c.created_at);
+        const endOfDay = new Date(chargeDateTo);
+        endOfDay.setHours(23, 59, 59, 999);
+        if (chargeDate > endOfDay) return false;
+      }
+      
+      return true;
+    });
+  }, [charges, chargeStatusFilter, chargeTypeFilter, chargeDateFrom, chargeDateTo]);
+
+  const handleShowPaymentReceipt = (payment: any) => {
+    setSelectedPaymentForReceipt(payment);
+    setShowPaymentReceipt(true);
+  };
 
   // Handle adding extra charge
   const handleAddExtraCharge = async () => {
@@ -1583,6 +1656,15 @@ export default function ClientDetail() {
 
           {/* TAB ESTADO CUENTA */}
           <TabsContent value="estado-cuenta" className="mt-4 space-y-4">
+            {/* Header with document buttons */}
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-semibold">Estado de Cuenta</h3>
+              <Button variant="outline" onClick={() => setShowAccountStatement(true)}>
+                <FileDown className="h-4 w-4 mr-2" />
+                Descargar Estado de Cuenta
+              </Button>
+            </div>
+
             <Tabs defaultValue="cargos" className="w-full">
               <TabsList className="bg-muted/50 p-1 h-auto">
                 <TabsTrigger value="cargos" className="data-[state=active]:bg-background">
@@ -1597,6 +1679,96 @@ export default function ClientDetail() {
 
               {/* Sub-tab: Todos los Cargos */}
               <TabsContent value="cargos" className="mt-4 space-y-4">
+                {/* Filters for charges */}
+                <Card>
+                  <CardContent className="py-3">
+                    <div className="flex flex-wrap items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <Filter className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Filtros:</span>
+                      </div>
+                      
+                      <Select value={chargeStatusFilter} onValueChange={(v: any) => setChargeStatusFilter(v)}>
+                        <SelectTrigger className="w-[130px]">
+                          <SelectValue placeholder="Estado" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos</SelectItem>
+                          <SelectItem value="paid">Pagados</SelectItem>
+                          <SelectItem value="pending">Pendientes</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <Select value={chargeTypeFilter} onValueChange={setChargeTypeFilter}>
+                        <SelectTrigger className="w-[140px]">
+                          <SelectValue placeholder="Tipo" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todos</SelectItem>
+                          <SelectItem value="mensualidad">Mensualidades</SelectItem>
+                          <SelectItem value="instalacion">Instalación</SelectItem>
+                          <SelectItem value="prorrateo">Prorrateo</SelectItem>
+                          <SelectItem value="otro">Otros cargos</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" size="sm" className="w-[130px] justify-start">
+                            <Calendar className="h-4 w-4 mr-2" />
+                            {chargeDateFrom ? format(chargeDateFrom, 'dd/MM/yy') : 'Desde'}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <CalendarComponent
+                            mode="single"
+                            selected={chargeDateFrom}
+                            onSelect={setChargeDateFrom}
+                            className="pointer-events-auto"
+                          />
+                        </PopoverContent>
+                      </Popover>
+
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" size="sm" className="w-[130px] justify-start">
+                            <Calendar className="h-4 w-4 mr-2" />
+                            {chargeDateTo ? format(chargeDateTo, 'dd/MM/yy') : 'Hasta'}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <CalendarComponent
+                            mode="single"
+                            selected={chargeDateTo}
+                            onSelect={setChargeDateTo}
+                            className="pointer-events-auto"
+                          />
+                        </PopoverContent>
+                      </Popover>
+
+                      {(chargeStatusFilter !== 'all' || chargeTypeFilter !== 'all' || chargeDateFrom || chargeDateTo) && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => {
+                            setChargeStatusFilter('all');
+                            setChargeTypeFilter('all');
+                            setChargeDateFrom(undefined);
+                            setChargeDateTo(undefined);
+                          }}
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          Limpiar
+                        </Button>
+                      )}
+
+                      <span className="text-sm text-muted-foreground ml-auto">
+                        Mostrando {filteredCharges.length} de {charges.length}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+
                 {/* Initial costs summary */}
                 {billing && (billing.installation_cost > 0 || billing.prorated_amount > 0 || (billing.additional_charges || 0) > 0) && (
                   <Card>
@@ -1696,14 +1868,14 @@ export default function ClientDetail() {
                   <Card className="border-amber-200 dark:border-amber-800">
                     <CardContent className="pt-4 pb-3 text-center">
                       <p className="text-xs text-muted-foreground uppercase">Total Cargos</p>
-                      <p className="text-2xl font-bold">{charges.length}</p>
+                      <p className="text-2xl font-bold">{filteredCharges.length}</p>
                     </CardContent>
                   </Card>
                   <Card className="border-emerald-200 dark:border-emerald-800">
                     <CardContent className="pt-4 pb-3 text-center">
                       <p className="text-xs text-muted-foreground uppercase">Pagados</p>
                       <p className="text-2xl font-bold text-emerald-600">
-                        {charges.filter((c: any) => c.status === 'paid').length}
+                        {filteredCharges.filter((c: any) => c.status === 'paid').length}
                       </p>
                     </CardContent>
                   </Card>
@@ -1711,7 +1883,7 @@ export default function ClientDetail() {
                     <CardContent className="pt-4 pb-3 text-center">
                       <p className="text-xs text-muted-foreground uppercase">Pendientes</p>
                       <p className="text-2xl font-bold text-red-600">
-                        {pendingCharges.length}
+                        {filteredCharges.filter((c: any) => c.status === 'pending').length}
                       </p>
                     </CardContent>
                   </Card>
@@ -1722,11 +1894,11 @@ export default function ClientDetail() {
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Receipt className="h-5 w-5" />
-                      Historial de Cargos ({charges.length})
+                      Historial de Cargos ({filteredCharges.length})
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {charges.length > 0 ? (
+                    {filteredCharges.length > 0 ? (
                       <div className="max-h-[500px] overflow-y-auto">
                         <Table>
                           <TableHeader>
@@ -1739,7 +1911,7 @@ export default function ClientDetail() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {charges.map((charge: any) => (
+                            {filteredCharges.map((charge: any) => (
                               <TableRow key={charge.id}>
                                 <TableCell className="text-muted-foreground">
                                   {format(new Date(charge.created_at), 'dd/MM/yyyy')}
@@ -1771,19 +1943,19 @@ export default function ClientDetail() {
                       </div>
                     ) : (
                       <p className="text-muted-foreground text-center py-8">
-                        No hay cargos registrados
+                        No hay cargos que coincidan con los filtros
                       </p>
                     )}
-                    {charges.length > 0 && (
+                    {filteredCharges.length > 0 && (
                       <div className="flex justify-between mt-3 pt-3 border-t">
                         <span className="text-muted-foreground">
                           Total Pagado: <span className="font-bold text-emerald-600">
-                            {formatCurrency(charges.filter((c: any) => c.status === 'paid').reduce((sum: number, c: any) => sum + Number(c.amount), 0))}
+                            {formatCurrency(filteredCharges.filter((c: any) => c.status === 'paid').reduce((sum: number, c: any) => sum + Number(c.amount), 0))}
                           </span>
                         </span>
                         <span className="text-muted-foreground">
                           Total Pendiente: <span className="font-bold text-amber-600">
-                            {formatCurrency(totalPendingCharges)}
+                            {formatCurrency(filteredCharges.filter((c: any) => c.status === 'pending').reduce((sum: number, c: any) => sum + Number(c.amount), 0))}
                           </span>
                         </span>
                       </div>
@@ -1842,6 +2014,7 @@ export default function ClientDetail() {
                               <TableHead>BANCO</TableHead>
                               <TableHead>RECIBO</TableHead>
                               <TableHead>NOTAS</TableHead>
+                              <TableHead></TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -1862,8 +2035,18 @@ export default function ClientDetail() {
                                 <TableCell className="text-muted-foreground">
                                   {payment.receipt_number || '-'}
                                 </TableCell>
-                                <TableCell className="text-muted-foreground text-sm max-w-[200px] truncate">
+                                <TableCell className="text-muted-foreground text-sm max-w-[150px] truncate">
                                   {payment.notes || '-'}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleShowPaymentReceipt(payment)}
+                                    title="Ver comprobante"
+                                  >
+                                    <Printer className="h-4 w-4" />
+                                  </Button>
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -2249,6 +2432,42 @@ export default function ClientDetail() {
             refetchCharges();
           }}
         />
+
+        {/* Account Statement Document */}
+        {billing && (
+          <PrintableDocument
+            open={showAccountStatement}
+            onOpenChange={setShowAccountStatement}
+            title="Estado de Cuenta"
+          >
+            <AccountStatementDocument
+              client={client}
+              billing={billing}
+              charges={charges}
+              payments={payments}
+              paymentMethods={paymentMethods}
+            />
+          </PrintableDocument>
+        )}
+
+        {/* Payment Receipt Document */}
+        {selectedPaymentForReceipt && (
+          <PrintableDocument
+            open={showPaymentReceipt}
+            onOpenChange={(open) => {
+              setShowPaymentReceipt(open);
+              if (!open) setSelectedPaymentForReceipt(null);
+            }}
+            title="Comprobante de Pago"
+          >
+            <PaymentReceiptDocument
+              payment={selectedPaymentForReceipt}
+              client={client}
+              paymentMethodName={getPaymentMethodName(selectedPaymentForReceipt.payment_type)}
+              bankName={selectedPaymentForReceipt.bank_type ? getBankName(selectedPaymentForReceipt.bank_type) : undefined}
+            />
+          </PrintableDocument>
+        )}
       </div>
     </AppLayout>
   );
