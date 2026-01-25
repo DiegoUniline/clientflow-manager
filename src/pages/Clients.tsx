@@ -12,6 +12,7 @@ import { DataTable } from '@/components/shared/DataTable';
 import { ClientDetailDialog } from '@/components/clients/ClientDetailDialog';
 import { ClientFormDialog } from '@/components/clients/ClientFormDialog';
 import { CancelClientDialog } from '@/components/clients/CancelClientDialog';
+import { ImportClientsDialog } from '@/components/clients/ImportClientsDialog';
 import { PaymentFormDialog } from '@/components/payments/PaymentFormDialog';
 import { exportToExcel } from '@/lib/exportToExcel';
 import { formatCurrency } from '@/lib/billing';
@@ -19,7 +20,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { 
   Plus, Download, Eye, CreditCard, XCircle, Users, 
   Wifi, Calendar, DollarSign, AlertTriangle, UserX, Clock,
-  CheckCircle2, Ban
+  CheckCircle2, Ban, Upload
 } from 'lucide-react';
 import { format, addMonths, isBefore, startOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -67,6 +68,7 @@ export default function Clients() {
   const [showFormDialog, setShowFormDialog] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
   const [editingClient, setEditingClient] = useState<ClientWithDetails | null>(null);
 
   // Fetch ALL clients
@@ -378,10 +380,16 @@ export default function Clients() {
               Exportar
             </Button>
             {isAdmin && (
-              <Button onClick={handleNewClient}>
-                <Plus className="mr-2 h-4 w-4" />
-                Nuevo Cliente
-              </Button>
+              <>
+                <Button variant="outline" onClick={() => setShowImportDialog(true)}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Importar
+                </Button>
+                <Button onClick={handleNewClient}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Nuevo Cliente
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -547,6 +555,12 @@ export default function Clients() {
           refetch();
           setShowPaymentDialog(false);
         }}
+      />
+
+      <ImportClientsDialog
+        open={showImportDialog}
+        onOpenChange={setShowImportDialog}
+        onSuccess={() => refetch()}
       />
     </AppLayout>
   );
