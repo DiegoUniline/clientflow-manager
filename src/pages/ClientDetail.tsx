@@ -1426,6 +1426,10 @@ export default function ClientDetail() {
             <TabsTrigger value="notas" className="data-[state=active]:bg-background">
               Notas
             </TabsTrigger>
+            <TabsTrigger value="historial" className="data-[state=active]:bg-background">
+              <History className="h-4 w-4 mr-1" />
+              Historial
+            </TabsTrigger>
           </TabsList>
 
           {/* TAB SERVICIOS */}
@@ -2537,16 +2541,22 @@ export default function ClientDetail() {
               </CardContent>
             </Card>
 
-            {/* Historial de Cambios del Cliente */}
+          </TabsContent>
+
+          {/* TAB HISTORIAL */}
+          <TabsContent value="historial" className="mt-4 space-y-4">
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg flex items-center gap-2">
                   <History className="h-5 w-5" />
                   Historial de Cambios
                 </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Registro de todos los cambios realizados en datos del cliente, cargos, pagos, equipo y servicios
+                </p>
               </CardHeader>
               <CardContent>
-                <ChangeHistoryPanel clientId={clientId} maxHeight="500px" />
+                <ChangeHistoryPanel clientId={clientId} maxHeight="600px" />
               </CardContent>
             </Card>
           </TabsContent>
